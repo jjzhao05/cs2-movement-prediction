@@ -31,8 +31,10 @@ from torch.utils.data import Dataset
 
 from features import (
     HORIZON_SECONDS,
+    MAX_SCORE,
     MAX_UTILITY,
     N_SLOTS,
+    PLAYER_CATEGORICALS,
     SLOTS_PER_SIDE,
     G,
     P,
@@ -47,6 +49,9 @@ PLAYER_INPUTS = [
     "health", "armor", "has_helmet", "has_defuser", "is_alive", "flash_duration",
     "is_scoped", "is_walking", "ducking", "is_defusing", "equip_value", "spotted",
     "has_bomb", "shots", "dmg_dealt", "dmg_taken", "kills", "footsteps",
+    "money", "cash_spent", "start_equip_value", "ammo_clip", "mags_left",
+    "n_flash", "n_smoke", "n_he", "n_molotov", "n_decoy", "has_zeus",
+    "is_airborne", "duck_amount", "zoom_lvl", "on_ladder",
     "is_teammate", "visible", "ever_seen", "seen_age",
 ]
 GLOBAL_INPUTS = [
@@ -55,11 +60,21 @@ GLOBAL_INPUTS = [
     "own_score", "enemy_score", "own_alive", "enemy_alive", "own_equip", "enemy_equip",
     "pov_is_t",
 ]
-UTILITY_INPUTS = ["x", "y", "z", "age", "is_smoke", "is_inferno", "own_team", "valid"]
+UTILITY_INPUTS = [
+    "x", "y", "z", "vel_x", "vel_y", "vel_z", "age",
+    "is_smoke", "is_inferno", "is_flash", "is_he", "is_decoy",
+    "in_flight", "own_team", "valid",
+]  # throw_id is returned separately as "utility_ids" (renumbered per window, 0 = none)
 
 N_BASE = len(PLAYER_INPUTS) - 4
 ALIVE = PLAYER_INPUTS.index("is_alive")
 TEAMMATE = PLAYER_INPUTS.index("is_teammate")
+# Enemy features a team never sees, even with the enemy in view: economy and inventory.
+PRIVATE = [PLAYER_INPUTS.index(f) for f in (
+    "money", "cash_spent", "start_equip_value", "ammo_clip", "mags_left",
+    "n_flash", "n_smoke", "n_he", "n_molotov", "n_decoy", "has_zeus",
+)]
+PRIVATE_CATS = [PLAYER_CATEGORICALS.index("primary"), PLAYER_CATEGORICALS.index("secondary")]
 
 
 class MirageWindows(Dataset):
@@ -123,16 +138,18 @@ class MirageWindows(Dataset):
         player[..., 8] = p[..., P["pitch"]] / 90.0
         player[..., 9] = p[..., P["health"]] / 100.0
         player[..., 10] = p[..., P["armor"]] / 100.0
-        rest = ["has_helmet", "has_defuser", "is_alive", "flash_duration", "is_scoped", "is_walking",
-                "ducking", "is_defusing", "equip_value", "spotted", "has_bomb", "shots", "dmg_dealt",
-                "dmg_taken", "kills", "footsteps"]
-        scale = {"flash_duration": 5.0, "equip_value": 5000.0, "dmg_dealt": 100.0, "dmg_taken": 100.0}
-        for i, name in enumerate(rest, start=11):
+        scale = {
+            "flash_duration": 5.0, "equip_value": 5000.0, "dmg_dealt": 100.0, "dmg_taken": 100.0,
+            "money": 16000.0, "cash_spent": 16000.0, "start_equip_value": 5000.0,
+            "ammo_clip": 30.0, "mags_left": 4.0, "zoom_lvl": 2.0,
+        }
+        for i, name in enumerate(PLAYER_INPUTS[11:N_BASE], start=11):
             player[..., i] = p[..., P[name]] / scale.get(name, 1.0)
 
         # Remap per-demo string ids onto the global vocabularies.
         cat = raw["player_cat"].astype(np.int64)
-        for j, (strings, vocab) in enumerate(((raw["weapon_strings"], self.weapon_vocab), (raw["place_strings"], self.place_vocab))):
+        for j, name in enumerate(PLAYER_CATEGORICALS):
+            strings, vocab = (raw["place_strings"], self.place_vocab) if name == "place" else (raw["weapon_strings"], self.weapon_vocab)
             lookup = {s: i for i, s in enumerate(vocab)}
             remap = np.array([lookup.get(s, 0) if s else 0 for s in strings], np.int64)
             cat[..., j] = remap[cat[..., j]]
@@ -141,7 +158,8 @@ class MirageWindows(Dataset):
         last_seen[..., 0:2] = (raw["last_seen"][..., 0:2] - self.pos_mean) / self.pos_std
         last_seen[..., 2] = raw["last_seen"][..., 2] / self.pos_std
         ever_seen = ~np.isnan(raw["seen_age"])
-        seen_age = np.where(ever_seen, np.minimum(raw["seen_age"], 30.0) / 10.0, 0.0).astype(np.float32)
+        # log scale without a cap: 0.5 s -> 0.08, 10 s -> 0.5, 115 s (a whole round) -> 1.0
+        seen_age = np.where(ever_seen, np.log1p(np.nan_to_num(raw["seen_age"])) / np.log1p(115.0), 0.0).astype(np.float32)
 
         g = raw["globals"]
         glob = np.zeros((len(g), 9), np.float32)
@@ -157,16 +175,17 @@ class MirageWindows(Dataset):
         glob[~known_bomb, 6:9] = 0
 
         side = raw["side"].copy()
-        side[..., S["score"]] /= 13.0
+        side[..., S["score"]] /= MAX_SCORE  # in [0, 1] up to five overtimes
         side[..., S["alive"]] /= 5.0
         side[..., S["equip_value"]] /= 25000.0
 
         u = raw["utility"]
-        util = u.copy()
-        util[..., 0:2] = (u[..., [U["X"], U["Y"]]] - self.pos_mean) / self.pos_std
-        util[..., 2] = u[..., U["Z"]] / self.pos_std
-        util[..., 3] = u[..., U["age"]] / 20.0
-        util[u[..., U["valid"]] == 0, 0:4] = 0
+        util = u.copy()  # same layout as UTILITY_FEATURES; thrown_by_t becomes own_team per window
+        util[..., [U["X"], U["Y"]]] = (u[..., [U["X"], U["Y"]]] - self.pos_mean) / self.pos_std
+        util[..., U["Z"]] = u[..., U["Z"]] / self.pos_std
+        util[..., [U["vel_x"], U["vel_y"], U["vel_z"]]] = u[..., [U["vel_x"], U["vel_y"], U["vel_z"]]] / 1000.0
+        util[..., U["age"]] = u[..., U["age"]] / 20.0
+        util[u[..., U["valid"]] == 0, : U["age"] + 1] = 0
 
         return {
             "player": player,
@@ -175,6 +194,7 @@ class MirageWindows(Dataset):
             "ever_seen": ever_seen,
             "seen_age": seen_age,
             "visible": raw["visible"],
+            "spotted_by": raw["spotted_by"],
             "globals": glob,
             "side": side,
             "utility": util,
@@ -215,6 +235,7 @@ class MirageWindows(Dataset):
         players = np.zeros((H, N_SLOTS, len(PLAYER_INPUTS)), np.float32)
         players[..., :N_BASE] = demo["player"][hist][:, order]
         cats = demo["player_cat"][hist][:, order].copy()
+        spotted_by = demo["spotted_by"][hist][:, order][:, :, order].copy()  # [H, slot, by_slot]
         visible = demo["visible"][hist][:, order]
         ever_seen = demo["ever_seen"][hist][:, order]
         seen_age = demo["seen_age"][hist][:, order]
@@ -246,10 +267,25 @@ class MirageWindows(Dataset):
             players[..., 0:3][hidden] = np.where(ever_seen[hidden, None], last_seen[hidden], 0)
             players[..., ALIVE] = alive  # deaths are public via the kill feed
             cats[hidden] = 0
+            players[:, SLOTS_PER_SIDE:, PRIVATE] = 0  # enemy money and inventory are never visible
+            cats[:, SLOTS_PER_SIDE:, PRIVATE_CATS] = 0
+            spotted_by[:, :SLOTS_PER_SIDE, SLOTS_PER_SIDE:] = False  # a team can't tell which enemy sees them
+            enemy_flying = (utility[..., U["in_flight"]] > 0) & (utility[..., U["thrown_by_t"]] == 0)
+            utility[enemy_flying] = 0  # enemy grenades count once they pop
             globals_[:, 14] = 0  # enemy equipment value
             if pov == 1:  # CTs can't see a dropped bomb
                 dropped = globals_[:, 5] > 0
                 globals_[dropped, 5:9] = 0
+
+        # Grenade identity: renumber the throws this window shows 1, 2, ... by first appearance, so the
+        # ids link a grenade's flight, pop and smoke/fire without revealing hidden enemy throws.
+        raw_ids = utility[..., U["throw_id"]].astype(np.int64) * (utility[..., U["valid"]] > 0)
+        seen = raw_ids[raw_ids > 0]
+        _, first = np.unique(seen, return_index=True)
+        lut = np.zeros(raw_ids.max() + 1, np.int64)
+        lut[seen[np.sort(first)]] = np.arange(1, len(first) + 1)
+        utility_ids = lut[raw_ids]
+        utility = utility[..., : U["throw_id"]]
 
         # Targets: next horizon_steps positions of the POV team, in game units.
         own_slots = order[:SLOTS_PER_SIDE]
@@ -266,7 +302,9 @@ class MirageWindows(Dataset):
             "players": torch.from_numpy(players),
             "player_cats": torch.from_numpy(cats),
             "globals": torch.from_numpy(globals_),
-            "utility": torch.from_numpy(utility),
+            "utility": torch.from_numpy(np.ascontiguousarray(utility)),
+            "utility_ids": torch.from_numpy(utility_ids),
+            "spotted_by": torch.from_numpy(spotted_by),
             "slot_valid": torch.from_numpy(demo["slot_valid"][r, order].copy()),
             "target_xy": torch.from_numpy(target_xy),
             "target_mask": torch.from_numpy(target_mask),
@@ -280,7 +318,7 @@ def collate_windows(batch):
     """Left-pad histories to the longest in the batch; hist_mask marks real steps."""
     H = max(item["players"].shape[0] for item in batch)
     out = {}
-    for key in ("players", "player_cats", "globals", "utility"):
+    for key in ("players", "player_cats", "globals", "utility", "utility_ids", "spotted_by"):
         first = batch[0][key]
         padded = first.new_zeros((len(batch), H) + first.shape[1:])
         for b, item in enumerate(batch):

@@ -7,8 +7,11 @@ directly instead of going through the numpy arrays:
     rounds         one row per round (ticks, winner, team names)
     round_players  roster: which steamid/name sits in each slot of a round
     round_steps    one row per 0.5 s step: round clock, bomb state, per-side score/alive/equipment
-    player_steps   one row per (step, player): state, weapon, place, event counts, visibility
-    utility        one row per active smoke/inferno per step
+    player_steps   one row per (step, player): state, economy, inventory, weapons, place,
+                   event counts, visibility
+    spotted_by     one row per (step, player, enemy who has them spotted)
+    utility        one row per grenade token per step: in flight, just popped (flash/HE), or
+                   an active smoke/inferno
 
 Slots 0-4 are the T side and 5-9 the CT side, as in the .npz files.
 
@@ -42,6 +45,8 @@ import numpy as np
 
 from features import (
     GLOBAL_FEATURES,
+    GRENADE_ITEMS,
+    GRENADE_KINDS,
     MAX_UTILITY,
     N_SLOTS,
     PLAYER_FEATURES,
@@ -58,7 +63,10 @@ SIDES = ("t", "ct")
 INT_PLAYER_FEATURES = {
     "health", "armor", "has_helmet", "has_defuser", "is_alive", "is_scoped", "is_walking",
     "ducking", "is_defusing", "equip_value", "spotted", "has_bomb", "shots", "kills", "footsteps",
+    "money", "cash_spent", "start_equip_value", "ammo_clip", "mags_left", *GRENADE_ITEMS, "has_zeus",
+    "is_airborne", "on_ladder",
 }
+KIND_NAMES = {kind: kind.removeprefix("is_") for kind in GRENADE_KINDS}  # is_he -> he
 INT_GLOBAL_FEATURES = {"bomb_planted", "plant_site_a", "plant_site_b", "bomb_dropped"}
 
 PLAYER_COLUMNS = [f.lower() for f in PLAYER_FEATURES]
@@ -117,8 +125,10 @@ CREATE TABLE IF NOT EXISTS player_steps (
     step        INTEGER NOT NULL,
     slot        INTEGER NOT NULL,
     {COLUMN_SEP.join(f"{c} {sql_type(f, INT_PLAYER_FEATURES)}" for c, f in zip(PLAYER_COLUMNS, PLAYER_FEATURES))},
-    weapon      TEXT,
+    weapon      TEXT,     -- active weapon
     place       TEXT,
+    primary_weapon   TEXT,
+    secondary_weapon TEXT,
     visible     INTEGER,  -- spotted by the enemy at some tick in this half second
     last_seen_x REAL,     -- NULL if never spotted this round
     last_seen_y REAL,
@@ -131,13 +141,35 @@ CREATE TABLE IF NOT EXISTS utility (
     round_id    INTEGER NOT NULL REFERENCES rounds,
     step        INTEGER NOT NULL,
     token       INTEGER NOT NULL CHECK (token BETWEEN 0 AND {MAX_UTILITY - 1}),
-    kind        TEXT NOT NULL CHECK (kind IN ('smoke', 'inferno')),
+    kind        TEXT NOT NULL CHECK (kind IN ({", ".join(f"'{k}'" for k in KIND_NAMES.values())})),
+    in_flight   INTEGER NOT NULL,  -- 1 while thrown and not yet popped
+    throw_id    INTEGER NOT NULL,  -- same id for a grenade's flight, pop and smoke/fire within a round; 0 = unknown
     thrown_by   TEXT NOT NULL,
     x REAL, y REAL, z REAL,
-    age         REAL,  -- seconds since it popped
+    vel_x REAL, vel_y REAL, vel_z REAL,
+    age         REAL,  -- seconds since thrown if in flight, else since it popped
     PRIMARY KEY (round_id, step, token)
 ) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS spotted_by (
+    round_id    INTEGER NOT NULL REFERENCES rounds,
+    step        INTEGER NOT NULL,
+    slot        INTEGER NOT NULL,  -- the player who is spotted
+    by_slot     INTEGER NOT NULL,  -- the enemy who has them spotted
+    PRIMARY KEY (round_id, step, slot, by_slot)
+) WITHOUT ROWID;
 """
+
+
+
+def table_columns(conn):
+    tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
+    return {t: [c[1] for c in conn.execute(f"PRAGMA table_info({t})")] for t in sorted(tables)}
+
+
+with sqlite3.connect(":memory:") as _mem:  # the columns of a database built from this features.py
+    _mem.executescript(SCHEMA)
+    EXPECTED_COLUMNS = table_columns(_mem)
 
 INDEXES = """
 CREATE INDEX IF NOT EXISTS rounds_demo ON rounds (demo_id);
@@ -154,7 +186,7 @@ def insert(conn, table, rows):
 
 def delete_demo(conn, demo_id):
     rounds = "SELECT round_id FROM rounds WHERE demo_id = ?"
-    for table in ("utility", "player_steps", "round_steps", "round_players"):
+    for table in ("utility", "spotted_by", "player_steps", "round_steps", "round_players"):
         conn.execute(f"DELETE FROM {table} WHERE round_id IN ({rounds})", (demo_id,))
     conn.execute("DELETE FROM rounds WHERE demo_id = ?", (demo_id,))
     conn.execute("DELETE FROM demos WHERE demo_id = ?", (demo_id,))
@@ -218,7 +250,8 @@ def load_demo(conn, demo_id, entry, z, next_round_id):
                     never = math.isnan(age[k][s])
                     yield (
                         [round_id, k, s] + to_sql(p_rows[k][s], player_ints)
-                        + [weapon_strings[cats[k][s][0]], place_strings[cats[k][s][1]], int(vis[k][s])]
+                        + [weapon_strings[cats[k][s][0]], place_strings[cats[k][s][1]],
+                           weapon_strings[cats[k][s][2]], weapon_strings[cats[k][s][3]], int(vis[k][s])]
                         + ([None] * 4 if never else ls[k][s] + [age[k][s]])
                     )
 
@@ -229,11 +262,18 @@ def load_demo(conn, demo_id, entry, z, next_round_id):
         insert(conn, "utility", (
             (
                 round_id, k, j,
-                "smoke" if u[k, j, U["is_smoke"]] else "inferno",
+                next(name for kind, name in KIND_NAMES.items() if u[k, j, U[kind]]),
+                int(u[k, j, U["in_flight"]]),
+                int(u[k, j, U["throw_id"]]),
                 "t" if u[k, j, U["thrown_by_t"]] else "ct",
-                float(u[k, j, U["X"]]), float(u[k, j, U["Y"]]), float(u[k, j, U["Z"]]), float(u[k, j, U["age"]]),
+                *(float(u[k, j, U[f]]) for f in ("X", "Y", "Z", "vel_x", "vel_y", "vel_z", "age")),
             )
             for k, j in zip(ks.tolist(), tokens.tolist())
+        ))
+
+        insert(conn, "spotted_by", (
+            (round_id, k, s, by)
+            for k, s, by in zip(*(a.tolist() for a in np.nonzero(z["spotted_by"][rs])))
         ))
     return len(n_steps)
 
@@ -261,6 +301,9 @@ def main():
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = NORMAL")
     conn.executescript(SCHEMA)
+    if table_columns(conn) != EXPECTED_COLUMNS:
+        conn.close()
+        raise SystemExit(f"{db_path} was built with an older features.py; rerun with --rebuild")
 
     start = time.perf_counter()
     wanted = {entry["file"]: entry for entry in manifest["demos"]}

@@ -3,3 +3,5 @@ rars/
 __pycache__/
 processed/
 *.db
+logs/
+checkpoints/
