@@ -12,8 +12,15 @@ directly instead of going through the numpy arrays:
 
 Slots 0-4 are the T side and 5-9 the CT side, as in the .npz files.
 
+The database is updated incrementally: demos in the manifest that are not in
+the database yet are added, demos that left the manifest are removed, and the
+split column is refreshed. Each demo is loaded in its own transaction, so an
+interrupted run leaves only whole demos behind. Use --rebuild after
+reprocessing demos with build_dataset.py --overwrite or changing features.py.
+
 Usage:
-    python build_sql.py                        # processed/ -> mirage.db
+    python build_sql.py                        # add new demos in processed/ to mirage.db
+    python build_sql.py --rebuild              # delete mirage.db and load everything again
     python build_sql.py --processed processed --db mirage.db
 
 Example query (where each player was at 20 s into the round):
@@ -55,6 +62,7 @@ INT_PLAYER_FEATURES = {
 INT_GLOBAL_FEATURES = {"bomb_planted", "plant_site_a", "plant_site_b", "bomb_dropped"}
 
 PLAYER_COLUMNS = [f.lower() for f in PLAYER_FEATURES]
+COLUMN_SEP = ",\n    "  # backslashes are not allowed inside f-string expressions before Python 3.12
 
 
 def sql_type(name, ints):
@@ -62,7 +70,7 @@ def sql_type(name, ints):
 
 
 SCHEMA = f"""
-CREATE TABLE demos (
+CREATE TABLE IF NOT EXISTS demos (
     demo_id     INTEGER PRIMARY KEY,
     file        TEXT NOT NULL UNIQUE,
     match       TEXT NOT NULL,
@@ -72,7 +80,7 @@ CREATE TABLE demos (
     n_steps     INTEGER NOT NULL
 );
 
-CREATE TABLE rounds (
+CREATE TABLE IF NOT EXISTS rounds (
     round_id        INTEGER PRIMARY KEY,
     demo_id         INTEGER NOT NULL REFERENCES demos,
     round_num       INTEGER NOT NULL,
@@ -86,7 +94,7 @@ CREATE TABLE rounds (
     UNIQUE (demo_id, round_num)
 );
 
-CREATE TABLE round_players (
+CREATE TABLE IF NOT EXISTS round_players (
     round_id    INTEGER NOT NULL REFERENCES rounds,
     slot        INTEGER NOT NULL CHECK (slot BETWEEN 0 AND {N_SLOTS - 1}),
     side        TEXT NOT NULL,
@@ -95,20 +103,20 @@ CREATE TABLE round_players (
     PRIMARY KEY (round_id, slot)
 ) WITHOUT ROWID;
 
-CREATE TABLE round_steps (
+CREATE TABLE IF NOT EXISTS round_steps (
     round_id    INTEGER NOT NULL REFERENCES rounds,
     step        INTEGER NOT NULL,
     tick        INTEGER NOT NULL,
-    {",\n    ".join(f"{g} {sql_type(g, INT_GLOBAL_FEATURES)}" for g in GLOBAL_FEATURES)},
-    {",\n    ".join(f"{side}_{f} INTEGER" for side in SIDES for f in SIDE_FEATURES)},
+    {COLUMN_SEP.join(f"{g} {sql_type(g, INT_GLOBAL_FEATURES)}" for g in GLOBAL_FEATURES)},
+    {COLUMN_SEP.join(f"{side}_{f} INTEGER" for side in SIDES for f in SIDE_FEATURES)},
     PRIMARY KEY (round_id, step)
 ) WITHOUT ROWID;
 
-CREATE TABLE player_steps (
+CREATE TABLE IF NOT EXISTS player_steps (
     round_id    INTEGER NOT NULL REFERENCES rounds,
     step        INTEGER NOT NULL,
     slot        INTEGER NOT NULL,
-    {",\n    ".join(f"{c} {sql_type(f, INT_PLAYER_FEATURES)}" for c, f in zip(PLAYER_COLUMNS, PLAYER_FEATURES))},
+    {COLUMN_SEP.join(f"{c} {sql_type(f, INT_PLAYER_FEATURES)}" for c, f in zip(PLAYER_COLUMNS, PLAYER_FEATURES))},
     weapon      TEXT,
     place       TEXT,
     visible     INTEGER,  -- spotted by the enemy at some tick in this half second
@@ -119,7 +127,7 @@ CREATE TABLE player_steps (
     PRIMARY KEY (round_id, step, slot)
 ) WITHOUT ROWID;
 
-CREATE TABLE utility (
+CREATE TABLE IF NOT EXISTS utility (
     round_id    INTEGER NOT NULL REFERENCES rounds,
     step        INTEGER NOT NULL,
     token       INTEGER NOT NULL CHECK (token BETWEEN 0 AND {MAX_UTILITY - 1}),
@@ -132,9 +140,9 @@ CREATE TABLE utility (
 """
 
 INDEXES = """
-CREATE INDEX rounds_demo ON rounds (demo_id);
-CREATE INDEX round_players_steamid ON round_players (steamid);
-CREATE INDEX player_steps_place ON player_steps (place);
+CREATE INDEX IF NOT EXISTS rounds_demo ON rounds (demo_id);
+CREATE INDEX IF NOT EXISTS round_players_steamid ON round_players (steamid);
+CREATE INDEX IF NOT EXISTS player_steps_place ON player_steps (place);
 """
 
 
@@ -142,6 +150,18 @@ def insert(conn, table, rows):
     rows = list(rows)
     if rows:
         conn.executemany(f"INSERT INTO {table} VALUES ({','.join('?' * len(rows[0]))})", rows)
+
+
+def delete_demo(conn, demo_id):
+    rounds = "SELECT round_id FROM rounds WHERE demo_id = ?"
+    for table in ("utility", "player_steps", "round_steps", "round_players"):
+        conn.execute(f"DELETE FROM {table} WHERE round_id IN ({rounds})", (demo_id,))
+    conn.execute("DELETE FROM rounds WHERE demo_id = ?", (demo_id,))
+    conn.execute("DELETE FROM demos WHERE demo_id = ?", (demo_id,))
+
+
+def next_id(conn, table, column):
+    return conn.execute(f"SELECT COALESCE(MAX({column}), -1) + 1 FROM {table}").fetchone()[0]
 
 
 def to_sql(values, ints):
@@ -221,7 +241,8 @@ def load_demo(conn, demo_id, entry, z, next_round_id):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--processed", default=str(ROOT / "processed"), help="output folder of build_dataset.py")
-    parser.add_argument("--db", default=str(ROOT / "mirage.db"), help="SQLite file to (re)create")
+    parser.add_argument("--db", default=str(ROOT / "mirage.db"), help="SQLite file to create or update")
+    parser.add_argument("--rebuild", action="store_true", help="delete the database and load every demo again")
     args = parser.parse_args()
 
     processed = Path(args.processed)
@@ -231,26 +252,51 @@ def main():
     manifest = json.loads(manifest_path.read_text())
 
     db_path = Path(args.db)
-    tmp = db_path.with_suffix(".tmp.db")
-    tmp.unlink(missing_ok=True)
-    conn = sqlite3.connect(tmp)
-    conn.execute("PRAGMA journal_mode = OFF")
-    conn.execute("PRAGMA synchronous = OFF")
+    if args.rebuild:
+        for suffix in ("", "-wal", "-shm"):
+            Path(f"{db_path}{suffix}").unlink(missing_ok=True)
+    # Autocommit mode, with one explicit transaction per demo. WAL keeps the
+    # database intact if a run is interrupted halfway through a demo.
+    conn = sqlite3.connect(db_path, isolation_level=None)
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")
     conn.executescript(SCHEMA)
 
     start = time.perf_counter()
-    round_id = 0
-    for demo_id, entry in enumerate(manifest["demos"]):
+    wanted = {entry["file"]: entry for entry in manifest["demos"]}
+    loaded = dict(conn.execute("SELECT file, demo_id FROM demos"))
+
+    stale = [file for file in loaded if file not in wanted]
+    for file in stale:
+        conn.execute("BEGIN")
+        delete_demo(conn, loaded[file])
+        conn.execute("COMMIT")
+        print(f"Removed {file} (no longer in the manifest)")
+
+    # Splits are a hash of the match name, so they only change with --seed or the fractions.
+    conn.executemany(
+        "UPDATE demos SET split = ? WHERE file = ? AND split != ?",
+        [(wanted[file]["split"], file, wanted[file]["split"]) for file in loaded if file in wanted],
+    )
+
+    new = [entry for entry in manifest["demos"] if entry["file"] not in loaded]
+    demo_id, round_id = next_id(conn, "demos", "demo_id"), next_id(conn, "rounds", "round_id")
+    for i, entry in enumerate(new):
         with np.load(processed / entry["file"]) as z:
+            conn.execute("BEGIN")
             round_id += load_demo(conn, demo_id, entry, z, round_id)
-        conn.commit()
-        print(f"[{demo_id + 1}/{len(manifest['demos'])}] {entry['file']}: {entry['rounds']} rounds")
+            conn.execute("COMMIT")
+        demo_id += 1
+        print(f"[{i + 1}/{len(new)}] {entry['file']}: {entry['rounds']} rounds")
 
     conn.executescript(INDEXES)
-    conn.commit()
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    total = conn.execute("SELECT COUNT(*) FROM demos").fetchone()[0]
     conn.close()
-    tmp.replace(db_path)
-    print(f"Wrote {db_path} ({db_path.stat().st_size / 1e6:.1f} MB, {time.perf_counter() - start:.1f}s)")
+    print(
+        f"Updated {db_path}: +{len(new)} / -{len(stale)} demos, {total} total "
+        f"({db_path.stat().st_size / 1e6:.1f} MB, {time.perf_counter() - start:.1f}s)"
+    )
 
 
 if __name__ == "__main__":
