@@ -224,14 +224,31 @@ class MirageWindows(Dataset):
 
     def __getitem__(self, i):
         demo_idx, r, t, pov = (int(v) for v in self.index[i])
-        demo = self.demos[demo_idx]
-        offset, n = int(demo["round_offset"][r]), int(demo["round_n_steps"][r])
         start = 0 if self.history_steps is None else max(0, t - self.history_steps + 1)
+        item = self._inputs(demo_idx, r, start, t, pov)
+        target_xy, target_mask, anchor_xy, anchor_alive = self._targets(demo_idx, r, np.array([t]), pov)
+        item.update(
+            target_xy=torch.from_numpy(target_xy[0]),
+            target_mask=torch.from_numpy(target_mask[0]),
+            anchor_xy=torch.from_numpy(anchor_xy[0]),
+            anchor_alive=torch.from_numpy(anchor_alive[0]),
+            meta=torch.tensor([demo_idx, int(self.demos[demo_idx]["round_num"][r]), t, pov]),
+        )
+        return item
+
+    @staticmethod
+    def _order(pov):
+        """Slot order of a POV team's view: own team first (0-4), enemies after (5-9)."""
+        return np.r_[5:10, 0:5] if pov == 1 else np.arange(N_SLOTS)
+
+    def _inputs(self, demo_idx, r, start, t, pov):
+        """Team-perspective inputs for steps start..t of a round (each step only uses what was known then)."""
+        demo = self.demos[demo_idx]
+        offset = int(demo["round_offset"][r])
         hist = slice(offset + start, offset + t + 1)
         H = t + 1 - start
 
-        # Own team first: slots 0-4 = POV team, 5-9 = enemies.
-        order = np.r_[5:10, 0:5] if pov == 1 else np.arange(N_SLOTS)
+        order = self._order(pov)
         players = np.zeros((H, N_SLOTS, len(PLAYER_INPUTS)), np.float32)
         players[..., :N_BASE] = demo["player"][hist][:, order]
         cats = demo["player_cat"][hist][:, order].copy()
@@ -287,17 +304,6 @@ class MirageWindows(Dataset):
         utility_ids = lut[raw_ids]
         utility = utility[..., : U["throw_id"]]
 
-        # Targets: next horizon_steps positions of the POV team, in game units.
-        own_slots = order[:SLOTS_PER_SIDE]
-        future = np.arange(t + 1, t + 1 + self.horizon_steps)
-        in_round = future < n
-        fut_idx = offset + np.minimum(future, n - 1)
-        target_xy = demo["xy"][fut_idx][:, own_slots]
-        target_mask = demo["alive"][fut_idx][:, own_slots] & in_round[:, None] & demo["slot_valid"][r, own_slots]
-        target_xy[~target_mask] = 0
-        anchor_xy = demo["xy"][offset + t][own_slots]
-        anchor_alive = demo["alive"][offset + t][own_slots] & demo["slot_valid"][r, own_slots]
-
         return {
             "players": torch.from_numpy(players),
             "player_cats": torch.from_numpy(cats),
@@ -306,12 +312,103 @@ class MirageWindows(Dataset):
             "utility_ids": torch.from_numpy(utility_ids),
             "spotted_by": torch.from_numpy(spotted_by),
             "slot_valid": torch.from_numpy(demo["slot_valid"][r, order].copy()),
-            "target_xy": torch.from_numpy(target_xy),
-            "target_mask": torch.from_numpy(target_mask),
-            "anchor_xy": torch.from_numpy(anchor_xy),
-            "anchor_alive": torch.from_numpy(anchor_alive),
-            "meta": torch.tensor([demo_idx, int(demo["round_num"][r]), t, pov]),
         }
+
+    def _targets(self, demo_idx, r, steps, pov):
+        """Next horizon_steps positions of the POV team after each step in `steps`, in game units.
+
+        Returns target_xy [S, F, 5, 2], target_mask [S, F, 5] (alive, round running, real slot),
+        anchor_xy [S, 5, 2] and anchor_alive [S, 5].
+        """
+        demo = self.demos[demo_idx]
+        offset, n = int(demo["round_offset"][r]), int(demo["round_n_steps"][r])
+        own_slots = self._order(pov)[:SLOTS_PER_SIDE]
+        valid = demo["slot_valid"][r, own_slots]
+        future = steps[:, None] + np.arange(1, self.horizon_steps + 1)  # [S, F]
+        in_round = future < n
+        fut_idx = offset + np.minimum(future, n - 1)
+        target_xy = demo["xy"][fut_idx][:, :, own_slots]
+        target_mask = demo["alive"][fut_idx][:, :, own_slots] & in_round[..., None] & valid
+        target_xy[~target_mask] = 0
+        anchor_xy = demo["xy"][offset + steps][:, own_slots]
+        anchor_alive = demo["alive"][offset + steps][:, own_slots] & valid
+        return target_xy, target_mask, anchor_xy, anchor_alive
+
+
+class MirageRounds(MirageWindows):
+    """Whole rounds from one team's perspective, for models that predict at every step at once.
+
+    One example = (demo, round, POV side). Inputs cover steps 0..n-2 of the round
+    (every step that has a future); step k's inputs are exactly what MirageWindows
+    gives for that step, so a causal model reading the whole round sees, at step k,
+    only what the team knew at step k. Targets are stacked for every step:
+    target_xy [T, 20, 5, 2], target_place [T, 20, 5] (game callout ids), target_mask
+    [T, 20, 5], anchor_xy / anchor_alive / anchor_speed [T, 5] (anchor_speed in u/s, for
+    the "moving players" subset).
+
+    Shorter histories (3 s / 10 s) are a model setting (an attention window),
+    not a dataset one, so history_seconds is always the full round here.
+    """
+
+    def __init__(self, processed_dir="processed", split="train", horizon_seconds=HORIZON_SECONDS,
+                 pov="both", mask_enemies=True):
+        super().__init__(processed_dir, split, history_seconds=None, horizon_seconds=horizon_seconds,
+                         pov=pov, mask_enemies=mask_enemies)
+        povs = {"both": (0, 1), "t": (0,), "ct": (1,)}[pov]
+        self.rounds = np.array([
+            (demo_idx, r, p)
+            for demo_idx, demo in enumerate(self.demos)
+            for r, n in enumerate(demo["round_n_steps"]) if n >= 2
+            for p in povs
+        ], np.int64)
+
+    def __len__(self):
+        return len(self.rounds)
+
+    def __getitem__(self, i):
+        demo_idx, r, pov = (int(v) for v in self.rounds[i])
+        demo = self.demos[demo_idx]
+        offset, n = int(demo["round_offset"][r]), int(demo["round_n_steps"][r])
+        steps = np.arange(n - 1)
+        item = self._inputs(demo_idx, r, 0, n - 2, pov)
+        target_xy, target_mask, anchor_xy, anchor_alive = self._targets(demo_idx, r, steps, pov)
+        own = self._order(pov)[:SLOTS_PER_SIDE]
+        vel = demo["player"][offset + steps][:, own, 3:5] * 250.0  # undo the /250 normalization
+        fut_idx = offset + np.minimum(steps[:, None] + np.arange(1, self.horizon_steps + 1), n - 1)
+        target_place = demo["player_cat"][fut_idx][:, :, own, 1]  # game callout ids, [T, F, 5]
+        item.update(
+            target_xy=torch.from_numpy(target_xy),
+            target_place=torch.from_numpy(target_place),
+            target_mask=torch.from_numpy(target_mask),
+            anchor_xy=torch.from_numpy(anchor_xy),
+            anchor_alive=torch.from_numpy(anchor_alive),
+            anchor_speed=torch.from_numpy(np.linalg.norm(vel, axis=-1).astype(np.float32)),
+            meta=torch.tensor([demo_idx, int(demo["round_num"][r]), pov]),
+        )
+        return item
+
+
+def collate_rounds(batch):
+    """Right-pad rounds to the longest in the batch; step_mask marks real steps.
+
+    Padding goes at the end so a causal model's real steps never attend to it.
+    """
+    T = max(item["players"].shape[0] for item in batch)
+    out = {}
+    for key in ("players", "player_cats", "globals", "utility", "utility_ids", "spotted_by",
+                "target_xy", "target_place", "target_mask", "anchor_xy", "anchor_alive", "anchor_speed"):
+        first = batch[0][key]
+        padded = first.new_zeros((len(batch), T) + first.shape[1:])
+        for b, item in enumerate(batch):
+            padded[b, : item[key].shape[0]] = item[key]
+        out[key] = padded
+    step_mask = torch.zeros(len(batch), T, dtype=torch.bool)
+    for b, item in enumerate(batch):
+        step_mask[b, : item["players"].shape[0]] = True
+    out["step_mask"] = step_mask
+    out["slot_valid"] = torch.stack([item["slot_valid"] for item in batch])
+    out["meta"] = torch.stack([item["meta"] for item in batch])
+    return out
 
 
 def collate_windows(batch):
