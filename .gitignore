@@ -5,3 +5,4 @@ processed/
 *.db
 logs/
 checkpoints/
+plots/

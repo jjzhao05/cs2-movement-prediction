@@ -49,7 +49,8 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from dataset import GLOBAL_INPUTS, PLAYER_INPUTS, UTILITY_INPUTS, MirageRounds, collate_rounds
-from features import HORIZON_SECONDS, MAX_UTILITY, N_SLOTS, SLOTS_PER_SIDE, STEP_SECONDS
+from features import (GLOBAL_FEATURES, HORIZON_SECONDS, MAX_UTILITY, N_SLOTS, PLAYER_CATEGORICALS, PLAYER_FEATURES,
+                      SIDE_FEATURES, SLOTS_PER_SIDE, STEP_SECONDS, UTILITY_FEATURES)
 
 ROOT = Path(__file__).parent
 H = int(round(HORIZON_SECONDS / STEP_SECONDS))  # 20 future steps
@@ -401,6 +402,141 @@ class Metrics:
         return rows
 
 
+class Predictions:
+    """Collects every prediction of an evaluation so visualize.py (or any later metric)
+    can work from the saved file instead of rerunning the model.
+
+    One entry per (round, POV team, step) in dataset order; per-step arrays are saved
+    flat, and rounds_start / rounds_n_steps give each round's slice. Slots are in the
+    POV team's order (own team 0-4, enemies 5-9); predictions cover slots 0-4.
+
+    Besides the predictions it keeps the full game state of every step in raw game
+    units (every player feature, weapons and callouts, what the team knew about each
+    enemy, who spots whom, bomb, score and every grenade), with the feature names
+    saved alongside, so plots never need processed/ or the model.
+    """
+
+    def __init__(self, ds: MirageRounds, maps: MapLookup | None = None):
+        self.ds, self.maps = ds, maps
+        self.next = 0  # evaluate() reads ds in order, so batches follow ds.rounds
+        self.rounds = {k: [] for k in ("file", "match", "split", "round_num", "pov", "n_steps", "names", "steamids",
+                                       "teams", "winner", "ticks")}
+        self.steps = {}
+        self.matches = {e["file"]: (e["match"], e["split"]) for e in ds.manifest["demos"]}
+        self.raw_file, self.raw = None, None
+
+    def _add(self, key, value):
+        self.steps.setdefault(key, []).append(value)
+
+    def _raw(self, file):
+        """The demo's processed .npz in raw game units (evaluate() goes demo by demo, so one is cached)."""
+        if file != self.raw_file:
+            with np.load(self.ds.dir / file) as z:
+                self.raw = {k: z[k] for k in ("player", "last_seen", "seen_age", "visible", "spotted_by", "globals",
+                                              "side", "utility", "round_winner", "round_steamids", "round_ticks")}
+            self.raw_file = file
+        return self.raw
+
+    @torch.no_grad()
+    def update(self, outputs, batch):
+        offsets, scales, logits = outputs
+        probs = logits.float().softmax(-1)
+        for b, T in enumerate(batch["step_mask"].sum(1).tolist()):
+            d, r, pov = (int(v) for v in self.ds.rounds[self.next])
+            self.next += 1
+            demo = self.ds.demos[d]
+            raw = self._raw(demo["file"])
+            offset = int(demo["round_offset"][r])
+            rows = slice(offset, offset + T)
+            order = self.ds._order(pov)
+            sides = [pov, 1 - pov]  # own side first
+            self.rounds["file"].append(demo["file"])
+            match, split = self.matches[demo["file"]]
+            self.rounds["match"].append(match)
+            self.rounds["split"].append(split)
+            self.rounds["round_num"].append(int(demo["round_num"][r]))
+            self.rounds["pov"].append(pov)
+            self.rounds["n_steps"].append(T)
+            self.rounds["names"].append(demo["round_names"][r][order])
+            self.rounds["steamids"].append(raw["round_steamids"][r][order].astype(str))
+            self.rounds["teams"].append(demo["round_teams"][r][sides])
+            self.rounds["winner"].append(int(raw["round_winner"][r]))  # 0 = T, 1 = CT, -1 = unknown
+            self.rounds["ticks"].append(raw["round_ticks"][r])
+
+            # Full game state, raw units, POV order.
+            self._add("player", raw["player"][rows][:, order])  # [T, 10, len(player_features)]
+            self._add("player_cat", demo["player_cat"][rows][:, order].astype(np.int16))  # ids into weapon / place vocab
+            self._add("enemy_visible", raw["visible"][rows][:, order])  # spotted by the other team right now
+            self._add("last_seen", raw["last_seen"][rows][:, order])  # [T, 10, 3] where the other team last saw them
+            self._add("seen_age", raw["seen_age"][rows][:, order])  # s since then, NaN = never seen
+            self._add("spotted_by", raw["spotted_by"][rows][:, order][:, :, order])  # [T, slot, by slot]
+            self._add("globals", raw["globals"][rows])  # [T, len(global_features)], bomb position etc.
+            self._add("side", raw["side"][rows][:, sides])  # [T, own/enemy, score/alive/equip]
+            self._add("utility", raw["utility"][rows])  # [T, 16, len(utility_features)], thrown_by_t is absolute
+
+            self._add("pred_offsets", offsets[b, :T].to(torch.float16).cpu().numpy())  # [T, 5, M, H, 2] game units
+            self._add("pred_scales", scales[b, :T].to(torch.float16).cpu().numpy())  # Laplace, units of 100
+            self._add("pred_probs", probs[b, :T].cpu().numpy())  # [T, 5, M]
+            if self.maps is not None:  # callout each predicted path ends in
+                ends = (batch["anchor_xy"][b, :T, :, None].float() + offsets[b, :T, :, :, -1].float()).cpu().numpy()
+                self._add("pred_end_place", self.maps.callout(ends).astype(np.int16))  # [T, 5, M]
+            self._add("anchor_xy", batch["anchor_xy"][b, :T].cpu().numpy())  # [T, 5, 2]
+            self._add("anchor_alive", batch["anchor_alive"][b, :T].cpu().numpy())
+            self._add("anchor_speed", batch["anchor_speed"][b, :T].cpu().numpy())
+            self._add("anchor_place", batch["player_cats"][b, :T, :SLOTS_PER_SIDE, 1].to(torch.int16).cpu().numpy())
+            self._add("target_xy", batch["target_xy"][b, :T].permute(0, 2, 1, 3).cpu().numpy())  # [T, 5, H, 2]
+            self._add("target_mask", batch["target_mask"][b, :T].permute(0, 2, 1).cpu().numpy())  # [T, 5, H]
+            self._add("target_place", batch["target_place"][b, :T].permute(0, 2, 1).to(torch.int16).cpu().numpy())
+            self._add("clock", batch["globals"][b, :T, 0].cpu().numpy() * 115.0)  # s since freeze time ended
+            self._add("bomb_planted", batch["globals"][b, :T, 1].cpu().numpy() > 0)
+            self._add("all_xy", demo["xy"][offset:offset + T][:, order])  # [T, 10, 2] everyone, true positions
+            self._add("all_alive", demo["alive"][offset:offset + T][:, order] & demo["slot_valid"][r, order])
+
+    def save(self, path):
+        rounds = {f"rounds_{k}": np.array(v) for k, v in self.rounds.items()}
+        rounds["rounds_start"] = np.concatenate([[0], np.cumsum(self.rounds["n_steps"])[:-1]]).astype(np.int64)
+        steps = {k: np.concatenate(v) for k, v in self.steps.items()}
+        names = {"player_features": PLAYER_FEATURES, "player_categoricals": PLAYER_CATEGORICALS,
+                 "global_features": GLOBAL_FEATURES, "side_features": SIDE_FEATURES, "utility_features": UTILITY_FEATURES,
+                 "place_vocab": self.ds.place_vocab, "weapon_vocab": self.ds.weapon_vocab}
+        np.savez_compressed(path, **rounds, **steps, **{k: np.array(v) for k, v in names.items()},
+                            step_seconds=STEP_SECONDS, horizons=json.dumps(HORIZONS), miss_units=MISS_UNITS,
+                            moving_speed=MOVING_SPEED)
+
+
+def save_player_predictions(path, pred, prob, meta, processed="processed", split="test", maps=None, batch_size=8):
+    """Save a per-player model's predictions (e.g. the baselines.ipynb models) in the same
+    file format as Predictions, so visualize.py and app.py can show any model.
+
+    pred [N, M, H, 2] absolute positions, prob [N, M], meta [N, 4] = (demo index within the
+    split, round index, step, slot 0-9), one row per living player and step, as baselines.ipynb
+    builds them. Players without a row get no prediction (e.g. dead). M = 1 for single-path models.
+    """
+    ds = MirageRounds(processed, split=split)
+    predictions = Predictions(ds, maps)
+    M = pred.shape[1]
+    row = {tuple(m): k for k, m in enumerate(np.asarray(meta).tolist())}
+    log_prob = np.log(np.clip(prob, 1e-9, None)).astype(np.float32)
+    first = 0
+    for batch in DataLoader(ds, batch_size=batch_size, collate_fn=collate_rounds):
+        B, T = batch["step_mask"].shape
+        offsets = torch.zeros(B, T, SLOTS_PER_SIDE, M, H, 2)
+        logits = torch.zeros(B, T, SLOTS_PER_SIDE, M)
+        for b, n in enumerate(batch["step_mask"].sum(1).tolist()):
+            d, r, pov = (int(v) for v in ds.rounds[first + b])
+            own = ds._order(pov)[:SLOTS_PER_SIDE]
+            for t in range(n):
+                for j, slot in enumerate(own):
+                    k = row.get((d, r, t, int(slot)))
+                    if k is not None:
+                        offsets[b, t, j] = torch.from_numpy(pred[k] - batch["anchor_xy"][b, t, j].numpy())
+                        logits[b, t, j] = torch.from_numpy(log_prob[k])
+        first += B
+        predictions.update((offsets, torch.ones_like(offsets), logits), batch)
+    predictions.save(path)
+    return path
+
+
 # ---------------------------------------------------------------------- training
 
 def log(path, message):
@@ -431,7 +567,7 @@ def to_device(batch, device):
 
 
 @torch.no_grad()
-def evaluate(model, ds, device, batch_size, amp, maps=None):
+def evaluate(model, ds, device, batch_size, amp, maps=None, predictions=None):
     model.eval()
     metrics = Metrics(maps)
     loader = DataLoader(ds, batch_size=batch_size, collate_fn=collate_rounds)
@@ -440,6 +576,8 @@ def evaluate(model, ds, device, batch_size, amp, maps=None):
         with torch.autocast(device.type, dtype=torch.bfloat16, enabled=amp):
             outputs = model(batch)
         metrics.update(outputs, batch)
+        if predictions is not None:
+            predictions.update(outputs, batch)
     return metrics.table()
 
 
@@ -473,10 +611,16 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out", help="checkpoint path (default: checkpoints/transformer_<history>[_fullinfo].pt)")
     parser.add_argument("--eval-only", action="store_true", help="evaluate an existing checkpoint on val and test")
+    parser.add_argument("--resume", action="store_true", help="continue training from <out>.last.pt (e.g. after a job time limit)")
+    parser.add_argument("--save-predictions", nargs="*", choices=["train", "val", "test"], default=["val", "test"],
+                        help="splits whose every prediction is saved to <out>.predictions_<split>.npz for visualize.py "
+                             "(default: val test; pass no splits to skip)")
     args = parser.parse_args()
 
     name = f"transformer_{args.history}" + ("_fullinfo" if args.full_info else "")
     out = Path(args.out or ROOT / "checkpoints" / f"{name}.pt")
+    last = out.with_suffix(".last.pt")  # every epoch, with optimizer state, for --resume
+    history_path = out.with_suffix(".history.json")
     log_path = ROOT / "logs" / f"{name}.log"
     log_path.parent.mkdir(exist_ok=True)
     out.parent.mkdir(exist_ok=True)
@@ -512,9 +656,20 @@ def main():
         warmup = steps_per_epoch  # one epoch
         sched = torch.optim.lr_scheduler.LambdaLR(
             opt, lambda s: min(1.0, (s + 1) / warmup) * 0.5 * (1 + math.cos(math.pi * min(s, total) / total)))
-        best, stale, history = math.inf, 0, []
+        best, stale, history, first_epoch = math.inf, 0, [], 0
+        if args.resume and last.exists():
+            state = torch.load(last, map_location="cpu", weights_only=False)
+            model.load_state_dict(state["state"])
+            opt.load_state_dict(state["opt"])
+            sched.load_state_dict(state["sched"])
+            rng.bit_generator.state = state["rng"]
+            torch.set_rng_state(state["torch_rng"])
+            best, stale, history, first_epoch = state["best"], state["stale"], state["history"], state["epoch"]
+            log(log_path, f"resumed from {last} after epoch {first_epoch}")
         start_all = time.perf_counter()
-        for epoch in range(args.epochs):
+        for epoch in range(first_epoch, args.epochs):
+            if stale >= args.patience:
+                break
             model.train()
             start, total_loss, n = time.perf_counter(), 0.0, 0
             loader = DataLoader(train, batch_sampler=batches_by_length(lengths, args.batch, rng),
@@ -533,7 +688,7 @@ def main():
             val = evaluate(model, data["val"], device, args.batch, amp)
             score = val["all 10s"]["minADE@6"]
             history.append({"epoch": epoch + 1, "loss": total_loss / max(n, 1), "val_minADE@6_10s": score,
-                            "seconds": time.perf_counter() - start})
+                            "seconds": time.perf_counter() - start, "lr": sched.get_last_lr()[0], "val": val})
             log(log_path, f"epoch {epoch + 1:2d}/{args.epochs}: loss {total_loss / max(n, 1):.3f}, "
                           f"val minADE@6 (10s) {score:.1f}, psi {val['all 10s']['psi (nats)']:.1f} ({history[-1]['seconds']:.0f}s)")
             if score < best:
@@ -542,15 +697,28 @@ def main():
                             "args": vars(args), "demos": manifest["demos"]}, out)
             else:
                 stale += 1
-                if stale >= args.patience:
-                    log(log_path, f"early stop: no improvement for {args.patience} epochs")
-                    break
+            history_path.write_text(json.dumps(history, indent=2))
+            torch.save({"state": model.state_dict(), "opt": opt.state_dict(), "sched": sched.state_dict(),
+                        "rng": rng.bit_generator.state, "torch_rng": torch.get_rng_state(),
+                        "epoch": epoch + 1, "best": best, "stale": stale, "history": history}, last)
+            if stale >= args.patience:
+                log(log_path, f"early stop: no improvement for {args.patience} epochs")
+                break
         log(log_path, f"trained {len(history)} epochs in {time.perf_counter() - start_all:.0f}s, best val minADE@6 (10s) {best:.1f}")
         model.load_state_dict(torch.load(out, map_location="cpu")["state"])
 
     start = time.perf_counter()
     maps = MapLookup(data["train"])
-    results = {split: evaluate(model, data[split], device, args.batch, amp, maps) for split in ("val", "test")}
+    results = {}
+    for split in dict.fromkeys(["val", "test"] + args.save_predictions):
+        predictions = Predictions(data[split], maps) if split in args.save_predictions else None
+        table = evaluate(model, data[split], device, args.batch, amp, maps, predictions)
+        if split in ("val", "test"):
+            results[split] = table
+        if predictions is not None:
+            path = out.with_suffix(f".predictions_{split}.npz")
+            predictions.save(path)
+            log(log_path, f"saved {split} predictions to {path} ({path.stat().st_size / 1e6:.0f} MB)")
     log(log_path, f"final evaluation (with callout / off-map metrics) took {time.perf_counter() - start:.0f}s")
     for split, table in results.items():
         log(log_path, f"{split}:")

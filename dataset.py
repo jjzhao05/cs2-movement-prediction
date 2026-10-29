@@ -204,6 +204,8 @@ class MirageWindows(Dataset):
             "round_n_steps": raw["round_n_steps"],
             "round_num": raw["round_num"],
             "slot_valid": raw["round_slot_valid"],
+            "round_names": raw["round_names"],  # [rounds, 10] player names, T slots first
+            "round_teams": raw["round_teams"],  # [rounds, 2] T and CT team names
         }
 
     def _windows(self, demo, demo_idx, povs):

@@ -508,6 +508,8 @@ def process_demo(path: Path, out_path: Path) -> dict:
     if map_name != "de_mirage":
         return {"file": path.name, "skipped": f"map is {map_name}"}
     heavy = parse_demo(demo, STEP_SECONDS)
+    if "player_sound" not in demo.events:  # some servers record without it, so there are no footsteps
+        return {"file": path.name, "skipped": "no player_sound events"}
     tickrate = demo.tickrate
     step_ticks = round(STEP_SECONDS * tickrate)
 
@@ -646,7 +648,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("data_dir", nargs="?", default=str(ROOT / "data"), help="folder of .dem files (default: data/)")
     parser.add_argument("--out", default=str(ROOT / "processed"), help="output folder (default: processed/)")
-    parser.add_argument("--workers", type=int, default=4, help="demos parsed in parallel (default: 4)")
+    parser.add_argument("--workers", type=int, default=6, help="demos parsed in parallel (default: 6)")
     parser.add_argument("--overwrite", action="store_true", help="reprocess demos that already have an .npz")
     parser.add_argument("--val-frac", type=float, default=0.1)
     parser.add_argument("--test-frac", type=float, default=0.1)

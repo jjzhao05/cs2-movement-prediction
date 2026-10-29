@@ -1,0 +1,495 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --bg: #0E1117; --panel: #161A22; --line: #262C38; --text: #E6EDF3; --muted: #8B94A3;
+    --accent: #58A6FF; --enemy: #EF5350; --t: #E3B341; --ct: #5DADE2; --good: #3FB950; --warn: #D29922; --bad: #F85149;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 13px/1.35 "Inter", "Segoe UI", system-ui, sans-serif; overflow: hidden; }
+  #app { display: grid; grid-template-columns: minmax(0, 1fr) 330px; grid-template-rows: auto minmax(0, 1fr) auto;
+    gap: 10px; height: 100%; padding: 2px; }
+  #hud { grid-column: 1 / 3; display: flex; align-items: center; gap: 22px; padding: 4px 4px 0; }
+  .stat .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+  .stat .v { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+  #toolbar { margin-left: auto; display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button, .tog { background: transparent; color: var(--muted); border: 0; padding: 5px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button.on, .tog.on { background: #1F6FEB33; color: var(--text); }
+  .tog { border: 1px solid var(--line); border-radius: 8px; }
+  #mapwrap { position: relative; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; min-height: 0; }
+  #map { width: 100%; height: 100%; display: block; cursor: grab; }
+  #map.drag { cursor: grabbing; }
+  #tip { position: absolute; pointer-events: none; background: #161A22F2; border: 1px solid var(--line); border-radius: 8px;
+    padding: 6px 9px; font-size: 12px; display: none; white-space: nowrap; box-shadow: 0 6px 18px #0008; }
+  #zoombtns { position: absolute; right: 10px; top: 10px; display: flex; flex-direction: column; gap: 4px; }
+  #zoombtns button { width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel);
+    color: var(--text); font-size: 16px; cursor: pointer; }
+  #feed { position: absolute; left: 10px; top: 10px; display: flex; flex-direction: column; gap: 4px; pointer-events: none; }
+  #feed div { background: #161A22E6; border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; font-size: 12px; }
+  #legend { position: absolute; left: 10px; bottom: 8px; color: var(--muted); font-size: 11px; background: #0E1117CC;
+    padding: 4px 8px; border-radius: 6px; }
+  #side { grid-row: 2 / 4; grid-column: 2; overflow-y: auto; min-height: 0; padding-right: 2px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; margin-bottom: 10px; }
+  .head { display: flex; justify-content: space-between; align-items: center; font-weight: 700; margin-bottom: 4px; }
+  .prow { display: grid; grid-template-columns: 12px minmax(0, 1fr) 84px; gap: 8px; align-items: center; padding: 5px 4px;
+    border-top: 1px solid #222834; cursor: pointer; border-radius: 6px; }
+  .prow:hover { background: #1C212B; }
+  .prow.focus { background: #1E2738; }
+  .prow.dead { opacity: .38; }
+  .dot { width: 11px; height: 11px; border-radius: 50%; }
+  .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sub { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .right { text-align: right; font-variant-numeric: tabular-nums; }
+  .hp { height: 5px; background: #2A303C; border-radius: 3px; overflow: hidden; margin: 3px 0 2px; }
+  .hp > div { height: 100%; border-radius: 3px; }
+  .bar { display: grid; grid-template-columns: 1fr 42px; gap: 8px; align-items: center; margin: 4px 0; font-size: 12px; }
+  .bar .fill { height: 16px; border-radius: 4px; position: relative; background: #222834; overflow: hidden; }
+  .bar .fill > div { position: absolute; inset: 0 auto 0 0; border-radius: 4px; }
+  .bar .fill span { position: absolute; left: 6px; top: 0; line-height: 16px; font-size: 11px; color: #fff; text-shadow: 0 1px 2px #000; white-space: nowrap; }
+  .errs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; }
+  .errs div { background: #11151C; border: 1px solid var(--line); border-radius: 8px; padding: 5px 7px; }
+  #bottom { grid-column: 1; display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; }
+  #bottom #timeline { flex: 1 1 320px; }
+  #controls { display: flex; gap: 5px; align-items: center; }
+  #controls button { height: 32px; min-width: 34px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel);
+    color: var(--text); cursor: pointer; font-size: 13px; padding: 0 9px; }
+  #controls button.play { background: var(--accent); border-color: var(--accent); color: #0B1220; font-weight: 700; min-width: 84px; }
+  #timeline { width: 100%; height: 64px; display: block; cursor: pointer; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+  ::-webkit-scrollbar { width: 8px; } ::-webkit-scrollbar-thumb { background: #2A303C; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="hud">
+    <div class="stat"><div class="k">Round time</div><div class="v" id="clock">0:00.0</div></div>
+    <div class="stat"><div class="k">Score</div><div class="v" id="score">0–0</div></div>
+    <div class="stat"><div class="k">Alive</div><div class="v" id="alive">5v5</div></div>
+    <div id="bombbadge"></div>
+    <div id="toolbar"></div>
+  </div>
+  <div id="mapwrap">
+    <canvas id="map"></canvas>
+    <div id="zoombtns"><button id="zin" title="Zoom in">+</button><button id="zout" title="Zoom out">−</button><button id="zreset" title="Reset view">⟲</button></div>
+    <div id="legend"></div>
+    <div id="feed"></div>
+    <div id="tip"></div>
+  </div>
+  <div id="side"></div>
+  <div id="bottom">
+    <div id="controls">
+      <button id="bstart" title="Start (Home)">⏮</button>
+      <button id="bback" title="Back 0.5 s (←)">◀</button>
+      <button id="bplay" class="play" title="Play / pause (Space)">▶ Play</button>
+      <button id="bfwd" title="Forward 0.5 s (→)">▶</button>
+      <button id="bend" title="End (End)">⏭</button>
+      <div class="seg" id="speed"></div>
+    </div>
+    <canvas id="timeline" title="Click or drag to seek"></canvas>
+  </div>
+</div>
+<script>
+const D = /*__DATA__*/;
+const N = D.steps, H = D.horizon;
+const TEAM = ["#4FC3F7", "#9CCC65", "#FFB74D", "#CE93D8", "#F48FB1"], ENEMY = "#EF5350";
+const SIDE = {T: "#E3B341", CT: "#5DADE2"};
+const KINDS = ["smoke", "inferno", "flash", "he", "decoy"];
+const opt = Object.assign({paths: "all", truth: true, team: false, nades: true, view: true, names: true, callouts: true, trail: 3}, D.options || {});
+let playhead = 0, playing = false, speed = 1, focus = null, last = null;
+
+// ---------------------------------------------------------------- helpers
+const $ = id => document.getElementById(id);
+const lerp = (a, b, f) => a + (b - a) * f;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+function fmtClock(s) { const m = Math.floor(s / 60); return `${m}:${(s - 60 * m).toFixed(1).padStart(4, "0")}`; }
+function lerpAngle(a, b, f) { let d = ((b - a + 540) % 360) - 180; return a + d * f; }
+function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c])); }
+
+// ---------------------------------------------------------------- map view
+const cv = $("map"), ctx = cv.getContext("2d");
+const img = new Image(); img.src = D.image;
+const [X0, X1, Y0, Y1] = D.extent;
+let view = {k: 1, ox: 0, oy: 0}, base = {s: 1, x: 0, y: 0}, W = 0, Hh = 0, dpr = 1;
+function resize() {
+  dpr = window.devicePixelRatio || 1;
+  const r = cv.getBoundingClientRect(); W = r.width; Hh = r.height;
+  cv.width = Math.round(W * dpr); cv.height = Math.round(Hh * dpr);
+  const s = Math.min(W / (X1 - X0), Hh / (Y1 - Y0));
+  base = {s, x: (W - s * (X1 - X0)) / 2, y: (Hh - s * (Y1 - Y0)) / 2};
+  const tr = $("timeline").getBoundingClientRect();
+  $("timeline").width = Math.round(tr.width * dpr); $("timeline").height = Math.round(tr.height * dpr);
+}
+const sx = x => (base.x + (x - X0) * base.s) * view.k + view.ox;
+const sy = y => (base.y + (Y1 - y) * base.s) * view.k + view.oy;
+const scale = () => base.s * view.k;  // screen px per game unit
+function toWorld(px, py) { return [X0 + ((px - view.ox) / view.k - base.x) / base.s, Y1 - ((py - view.oy) / view.k - base.y) / base.s]; }
+function zoomAt(px, py, f) {
+  const k = clamp(view.k * f, 0.6, 12); f = k / view.k;
+  view.ox = px - (px - view.ox) * f; view.oy = py - (py - view.oy) * f; view.k = k;
+}
+cv.addEventListener("wheel", e => { e.preventDefault(); const r = cv.getBoundingClientRect(); zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(-e.deltaY * 0.0015)); }, {passive: false});
+let drag = null;
+cv.addEventListener("mousedown", e => { drag = {x: e.clientX, y: e.clientY, ox: view.ox, oy: view.oy, moved: false}; cv.classList.add("drag"); });
+window.addEventListener("mouseup", e => {
+  if (drag && !drag.moved) clickMap(e);
+  drag = null; cv.classList.remove("drag");
+});
+window.addEventListener("mousemove", e => {
+  if (drag) { const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
+    view.ox = drag.ox + dx; view.oy = drag.oy + dy; }
+  hover(e);
+});
+cv.addEventListener("dblclick", () => { view = {k: 1, ox: 0, oy: 0}; });
+$("zin").onclick = () => zoomAt(W / 2, Hh / 2, 1.4);
+$("zout").onclick = () => zoomAt(W / 2, Hh / 2, 1 / 1.4);
+$("zreset").onclick = () => { view = {k: 1, ox: 0, oy: 0}; };
+
+// ---------------------------------------------------------------- state at the playhead
+function stepPair() { const i = Math.min(Math.floor(playhead), N - 1); return [i, Math.min(i + 1, N - 1), playhead - i]; }
+function pos(p) {  // interpolated screen position of slot p, or null if dead
+  const [i, j, f] = stepPair();
+  if (!D.alive[i][p]) return null;
+  const a = D.xy[i][p], b = D.alive[j][p] ? D.xy[j][p] : a;
+  return [lerp(a[0], b[0], f), lerp(a[1], b[1], f)];
+}
+function enemyShown(i, p) { return !opt.team || D.visible[i][p]; }
+// Every death in the round: who, the step they were first seen dead, and where they fell.
+const DEATHS = [];
+for (let p = 0; p < 10; p++)
+  for (let k = 1; k < N; k++)
+    if (D.alive[k - 1][p] && !D.alive[k][p]) { DEATHS.push({p, step: k, x: D.xy[k - 1][p][0], y: D.xy[k - 1][p][1]}); break; }
+DEATHS.sort((a, b) => a.step - b.step);
+
+// ---------------------------------------------------------------- drawing
+function arrow(x0, y0, x1, y1, size, color) {
+  const a = Math.atan2(y1 - y0, x1 - x0);
+  ctx.fillStyle = color; ctx.beginPath();
+  ctx.moveTo(x1 + Math.cos(a) * size * 0.4, y1 + Math.sin(a) * size * 0.4);
+  ctx.lineTo(x1 - Math.cos(a - 0.5) * size, y1 - Math.sin(a - 0.5) * size);
+  ctx.lineTo(x1 - Math.cos(a + 0.5) * size, y1 - Math.sin(a + 0.5) * size);
+  ctx.closePath(); ctx.fill();
+}
+function smoothLine(pts) {  // screen points -> smooth path through midpoints
+  ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+  for (let k = 1; k < pts.length - 1; k++) {
+    const mx = (pts[k][0] + pts[k + 1][0]) / 2, my = (pts[k][1] + pts[k + 1][1]) / 2;
+    ctx.quadraticCurveTo(pts[k][0], pts[k][1], mx, my);
+  }
+  const l = pts[pts.length - 1]; ctx.lineTo(l[0], l[1]);
+}
+function draw() {
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = "#0E1117"; ctx.fillRect(0, 0, W, Hh);
+  if (img.complete) ctx.drawImage(img, sx(X0), sy(Y1), (X1 - X0) * scale(), (Y1 - Y0) * scale());
+  const [i, j, f] = stepPair();
+  const u = scale();
+
+  if (opt.callouts) {
+    ctx.font = `600 ${clamp(10 * Math.sqrt(view.k), 9, 15)}px Inter, Segoe UI, sans-serif`;
+    ctx.textAlign = "center"; ctx.fillStyle = "rgba(201,209,217,0.5)";
+    for (const c of D.callouts) ctx.fillText(c.label.toUpperCase(), sx(c.x), sy(c.y));
+  }
+
+  // grenades (step i, fading in/out across the step)
+  if (opt.nades) {
+    for (const g of D.utility[i]) {
+      const [x, y, kind, own, flying, vx, vy, age] = g, k = KINDS[kind];
+      const X = sx(x), Y = sy(y), rim = own ? "rgba(93,173,226,0.95)" : "rgba(239,83,80,0.95)";
+      if (flying) {
+        const nx = x + vx * 0.5 * f, ny = y + vy * 0.5 * f;
+        ctx.fillStyle = "#E6EDF3"; ctx.beginPath(); ctx.arc(sx(nx), sy(ny), 3.5, 0, 7); ctx.fill();
+      } else if (k === "smoke" || k === "inferno") {
+        const r = (k === "smoke" ? 144 : 120) * u;
+        ctx.beginPath(); ctx.arc(X, Y, r, 0, 7);
+        ctx.fillStyle = k === "smoke" ? "rgba(200,205,212,0.5)" : "rgba(255,140,40,0.4)"; ctx.fill();
+        ctx.lineWidth = 1.5; ctx.strokeStyle = rim; ctx.stroke();
+      } else {
+        ctx.fillStyle = k === "flash" ? "#FFF176" : "#FF7043";
+        ctx.beginPath(); ctx.arc(X, Y, 7 * (1 - f * 0.5), 0, 7); ctx.fill();
+      }
+    }
+  }
+
+  // bomb
+  const bomb = D.bomb[i];
+  if (bomb[2]) {
+    ctx.fillStyle = bomb[2] === 2 ? "#F85149" : "#D29922"; ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5;
+    ctx.fillRect(sx(bomb[0]) - 6, sy(bomb[1]) - 6, 12, 12); ctx.strokeRect(sx(bomb[0]) - 6, sy(bomb[1]) - 6, 12, 12);
+  }
+
+  // trails
+  const trail = Math.round(opt.trail / D.stepSeconds);
+  if (trail > 0) {
+    for (let p = 0; p < 10; p++) {
+      if (!D.alive[i][p] || (p >= 5 && !enemyShown(i, p))) continue;
+      const pts = [];
+      for (let k = Math.max(0, i - trail); k <= i; k++) if (D.alive[k][p]) pts.push([sx(D.xy[k][p][0]), sy(D.xy[k][p][1])]);
+      const now = pos(p); pts.push([sx(now[0]), sy(now[1])]);
+      if (pts.length < 2) continue;
+      ctx.strokeStyle = p < 5 ? TEAM[p] : ENEMY; ctx.globalAlpha = 0.35; ctx.lineWidth = 2; smoothLine(pts); ctx.stroke(); ctx.globalAlpha = 1;
+    }
+  }
+
+  // predictions: blend step i's and step j's paths so they glide too
+  for (let p = 0; p < 5; p++) {
+    if (!D.alive[i][p] || (focus !== null && focus !== p) || opt.paths === "none") continue;
+    const pa = D.paths[i][p], pb = D.alive[j][p] ? D.paths[j][p] : pa;
+    const pr = D.probs[i][p], prb = D.alive[j][p] ? D.probs[j][p] : pr;
+    const probs = pr.map((v, m) => lerp(v, prb[m], f));
+    const order = probs.map((v, m) => m).sort((a, b) => probs[b] - probs[a]);
+    const top = probs[order[0]];
+    const now = pos(p);
+    for (const [rank, m] of order.entries()) {
+      if (opt.paths === "top" && rank > 0) continue;
+      if (opt.paths === "all" && rank > 0 && probs[m] < 0.04) continue;
+      const pts = [[sx(now[0]), sy(now[1])]];
+      for (let h = 0; h < H; h++) pts.push([sx(lerp(pa[m][h][0], pb[m][h][0], f)), sy(lerp(pa[m][h][1], pb[m][h][1], f))]);
+      ctx.globalAlpha = 0.25 + 0.75 * probs[m] / top;
+      ctx.strokeStyle = TEAM[p]; ctx.lineWidth = 1.5 + 4 * probs[m]; ctx.lineCap = "round";
+      smoothLine(pts); ctx.stroke();
+      const a = pts[pts.length - 2], b = pts[pts.length - 1];
+      arrow(a[0], a[1], b[0], b[1], 9 + 8 * probs[m], TEAM[p]);
+      ctx.globalAlpha = 1;
+    }
+    if (opt.truth && D.truth[i][p].length) {
+      const pts = [[sx(now[0]), sy(now[1])]].concat(D.truth[i][p].map(q => [sx(q[0]), sy(q[1])]));
+      ctx.setLineDash([6, 5]); ctx.strokeStyle = "rgba(255,255,255,0.85)"; ctx.lineWidth = 2;
+      smoothLine(pts); ctx.stroke(); ctx.setLineDash([]);
+    }
+  }
+
+  // deaths, both teams (the kill feed shows enemy deaths to everyone): a ringed cross and the name
+  for (const d of DEATHS) {
+    if (d.step > i) break;
+    const X = sx(d.x), Y = sy(d.y), color = d.p < 5 ? TEAM[d.p] : ENEMY;
+    const fresh = clamp(1 - (playhead - d.step) / 6, 0, 1);  // pulse for the first few seconds
+    if (fresh > 0) { ctx.beginPath(); ctx.arc(X, Y, 9 + 10 * (1 - fresh), 0, 7); ctx.strokeStyle = color; ctx.globalAlpha = 0.6 * fresh; ctx.lineWidth = 2; ctx.stroke(); }
+    ctx.globalAlpha = 0.9;
+    ctx.beginPath(); ctx.arc(X, Y, 7, 0, 7); ctx.fillStyle = "#0E1117"; ctx.fill(); ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.lineWidth = 2.2; ctx.beginPath();
+    ctx.moveTo(X - 3.5, Y - 3.5); ctx.lineTo(X + 3.5, Y + 3.5); ctx.moveTo(X + 3.5, Y - 3.5); ctx.lineTo(X - 3.5, Y + 3.5); ctx.stroke();
+    if (opt.names) {
+      ctx.font = "10px Inter, Segoe UI, sans-serif"; ctx.textAlign = "center"; ctx.globalAlpha = 0.75;
+      ctx.lineWidth = 3; ctx.strokeStyle = "#0E1117"; ctx.strokeText(D.names[d.p], X, Y + 18);
+      ctx.fillStyle = color; ctx.fillText(D.names[d.p], X, Y + 18);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // where the team last saw hidden enemies
+  for (let p = 5; p < 10; p++) {
+    const ls = D.lastSeen[i][p];
+    if (!D.alive[i][p] || D.visible[i][p] || !ls) continue;
+    ctx.strokeStyle = ENEMY; ctx.setLineDash([3, 3]); ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(sx(ls[0]), sy(ls[1]), 7, 0, 7); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = "#F0A3A1"; ctx.font = "10px Inter, Segoe UI, sans-serif"; ctx.textAlign = "center";
+    ctx.fillText(`${Math.round(ls[2] + f * D.stepSeconds)}s`, sx(ls[0]), sy(ls[1]) + 18);
+  }
+
+  // players
+  for (let p = 9; p >= 0; p--) {
+    const now = pos(p); if (!now) continue;
+    const own = p < 5, seen = own || D.visible[i][p];
+    if (!own && !enemyShown(i, p)) continue;
+    const X = sx(now[0]), Y = sy(now[1]), color = own ? TEAM[p] : ENEMY;
+    ctx.globalAlpha = seen ? 1 : 0.4;
+    if (opt.view) {
+      const yaw = lerpAngle(D.yaw[i][p], D.alive[j][p] ? D.yaw[j][p] : D.yaw[i][p], f) * Math.PI / 180;
+      ctx.fillStyle = own ? "rgba(255,255,255,0.18)" : "rgba(239,83,80,0.18)";
+      ctx.beginPath(); ctx.moveTo(X, Y); ctx.arc(X, Y, 34, -yaw - 0.45, -yaw + 0.45); ctx.closePath(); ctx.fill();
+    }
+    ctx.beginPath(); ctx.arc(X, Y, own ? 7.5 : 6.5, 0, 7); ctx.fillStyle = color; ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = own && (focus === null || focus === p) ? "#fff" : "#0B0E13"; ctx.stroke();
+    if (D.hasBomb[i][p]) { ctx.fillStyle = "#F85149"; ctx.fillRect(X + 5, Y - 10, 6, 6); }
+    if (opt.names) {
+      ctx.font = "600 11px Inter, Segoe UI, sans-serif"; ctx.textAlign = "center";
+      ctx.lineWidth = 3; ctx.strokeStyle = "#0E1117"; ctx.strokeText(D.names[p], X, Y - 12);
+      ctx.fillStyle = "#fff"; ctx.fillText(D.names[p], X, Y - 12);
+      const hp = D.hp[i][p];
+      ctx.fillStyle = "#2A303C"; ctx.fillRect(X - 10, Y + 10, 20, 3);
+      ctx.fillStyle = hp > 50 ? "#3FB950" : hp > 20 ? "#D29922" : "#F85149"; ctx.fillRect(X - 10, Y + 10, 20 * hp / 100, 3);
+    }
+    ctx.globalAlpha = 1;
+  }
+}
+
+// ---------------------------------------------------------------- hover and click
+function nearestPlayer(e) {
+  const r = cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+  const [i] = stepPair(); let best = null, bd = 14;
+  for (let p = 0; p < 10; p++) {
+    const now = pos(p); if (!now || (p >= 5 && !enemyShown(i, p))) continue;
+    const d = Math.hypot(sx(now[0]) - mx, sy(now[1]) - my); if (d < bd) { bd = d; best = p; }
+  }
+  return [best, mx, my];
+}
+function hover(e) {
+  const tip = $("tip");
+  if (drag || e.target !== cv) { tip.style.display = "none"; return; }
+  const [p, mx, my] = nearestPlayer(e), [i] = stepPair();
+  if (p === null) { tip.style.display = "none"; return; }
+  const own = p < 5, status = own ? "" : D.visible[i][p] ? " · spotted" : " · hidden from team";
+  tip.innerHTML = `<b>${esc(D.names[p])}</b><span style="color:var(--muted)">${status}</span><br>${D.hp[i][p]} hp · ${esc(D.weapons[D.weapon[i][p]])}<br>${esc(D.places[D.place[i][p]] || "")}`
+    + (own ? `<br><span style="color:var(--muted)">click to focus</span>` : "");
+  tip.style.display = "block";
+  tip.style.left = Math.min(mx + 14, W - tip.offsetWidth - 6) + "px"; tip.style.top = (my + 14) + "px";
+}
+function clickMap(e) { const [p] = nearestPlayer(e); if (p !== null && p < 5) setFocus(focus === p ? null : p); else if (p === null) setFocus(null); }
+function setFocus(p) { focus = p; last = null; }
+
+// ---------------------------------------------------------------- side panel
+function teamCard(own, i) {
+  const slots = own ? [0, 1, 2, 3, 4] : [5, 6, 7, 8, 9];
+  const side = own ? D.meta.side : (D.meta.side === "T" ? "CT" : "T");
+  const color = SIDE[side];
+  let rows = "";
+  for (const p of slots) {
+    if (!D.names[p]) continue;
+    const alive = D.alive[i][p], hp = alive ? D.hp[i][p] : 0;
+    const hc = hp > 50 ? "var(--good)" : hp > 20 ? "var(--warn)" : "var(--bad)";
+    const n = D.nades[i][p], nades = "☁".repeat(n[1]) + "✦".repeat(n[0]) + "●".repeat(n[2]) + "🔥".repeat(n[3]);
+    const extras = (D.kit[i][p] ? " · kit" : "") + (D.hasBomb[i][p] ? " · 💣" : "") + (!own && alive ? (D.visible[i][p] ? " · 👁" : " · hidden") : "");
+    const armor = D.armor[i][p] > 0 ? (D.helmet[i][p] ? "⛑" : "🛡") : "";
+    rows += `<div class="prow ${alive ? "" : "dead"} ${own && focus === p ? "focus" : ""}" data-p="${p}">
+      <div class="dot" style="background:${own ? TEAM[p] : ENEMY}"></div>
+      <div><div class="name">${esc(D.names[p])}</div><div class="sub">${esc(D.weapons[D.weapon[i][p]])} ${nades}${extras}</div>
+           <div class="sub">${alive ? esc(D.places[D.place[i][p]] || "") : "dead"}</div></div>
+      <div class="right"><b>${hp}</b> <span class="sub">hp</span> ${armor}<div class="hp"><div style="width:${hp}%;background:${hc}"></div></div>
+           <div class="sub">$${D.money[i][p].toLocaleString()}</div></div></div>`;
+  }
+  const team = own ? D.meta.team : D.meta.enemy, alive = D.aliveCount[i][own ? 0 : 1];
+  return `<div class="card"><div class="head"><span>${esc(team)} <span class="badge" style="background:${color}22;color:${color}">${side}</span></span>
+    <span class="sub">${alive} alive</span></div>${rows}</div>`;
+}
+function focusCard(i) {
+  if (focus === null) return `<div class="card sub">Click a teammate (on the map or above) to see where the model thinks they'll go.</div>`;
+  const p = focus;
+  if (!D.alive[i][p]) return `<div class="card"><b>${esc(D.names[p])}</b> <span class="sub">is dead.</span></div>`;
+  const probs = D.probs[i][p], order = probs.map((v, m) => m).sort((a, b) => probs[b] - probs[a]), top = probs[order[0]];
+  let bars = "";
+  for (const [rank, m] of order.entries()) {
+    const end = D.endPlace ? D.places[D.endPlace[i][p][m]] : "";
+    bars += `<div class="bar"><div class="fill"><div style="width:${100 * probs[m] / top}%;background:${TEAM[p]};opacity:${0.4 + 0.6 * probs[m] / top}"></div>
+      <span>Path ${rank + 1}${end ? " · " + esc(end) : ""}</span></div><div class="right">${Math.round(100 * probs[m])}%</div></div>`;
+  }
+  const errs = [3, 5, 10].map(s => {
+    const v = D.err[s].min[i][p], t = D.err[s].top[i][p];
+    return `<div><div class="sub">Error ${s}s</div><b>${v < 0 ? "—" : v + "u"}</b><div class="sub">${t < 0 ? "" : "top path " + t + "u"}</div></div>`;
+  }).join("");
+  return `<div class="card"><div class="head"><span><span class="dot" style="display:inline-block;background:${TEAM[p]};margin-right:6px"></span>${esc(D.names[p])}: where next?</span>
+    <span class="sub" style="cursor:pointer" id="unfocus">✕</span></div>${bars}<div class="errs">${errs}</div>
+    <div class="sub" style="margin-top:6px">Error: best of 6 paths vs what happened (1u ≈ 1.9 cm); below it, the most likely path.</div></div>`;
+}
+function renderSide(i) {
+  const key = `${i}|${focus}`;
+  if (key === last) return; last = key;
+  $("side").innerHTML = teamCard(true, i) + focusCard(i) + teamCard(false, i);
+  for (const r of document.querySelectorAll(".prow")) {
+    const p = +r.dataset.p; if (p < 5) r.onclick = () => setFocus(focus === p ? null : p);
+  }
+  const u = $("unfocus"); if (u) u.onclick = () => setFocus(null);
+  const sc = D.score[i], al = D.aliveCount[i];
+  $("score").textContent = `${sc[0]}–${sc[1]}`; $("alive").textContent = `${al[0]}v${al[1]}`;
+  $("bombbadge").innerHTML = D.bomb[i][2] === 2 ? `<span class="badge" style="background:#F8514922;color:#F85149">💣 Bomb planted</span>` : "";
+}
+
+// ---------------------------------------------------------------- kill feed
+let feedKey = null;
+function renderFeed() {
+  const recent = DEATHS.filter(d => d.step <= playhead && playhead - d.step < 6 / D.stepSeconds);
+  const key = recent.map(d => d.p).join(",");
+  if (key === feedKey) return; feedKey = key;
+  $("feed").innerHTML = recent.map(d => {
+    const own = d.p < 5, color = own ? TEAM[d.p] : ENEMY, who = own ? D.meta.team : D.meta.enemy;
+    return `<div><span style="color:${color}">✕ ${esc(D.names[d.p])}</span> <span style="color:var(--muted)">${esc(who)} · ${fmtClock(D.clock[Math.min(d.step, N - 1)])}</span></div>`;
+  }).join("");
+}
+
+// ---------------------------------------------------------------- timeline
+const tl = $("timeline"), tctx = tl.getContext("2d");
+function drawTimeline() {
+  const w = tl.width / dpr, h = tl.height / dpr;
+  tctx.setTransform(dpr, 0, 0, dpr, 0, 0); tctx.clearRect(0, 0, w, h);
+  const pad = 8, x = k => pad + (w - 2 * pad) * k / Math.max(N - 1, 1);
+  const series = [D.teamErr.top, D.teamErr.min], max = Math.max(1, ...series.flat().filter(v => v >= 0));
+  const y = v => h - 6 - (h - 18) * v / max;
+  for (const [si, s] of series.entries()) {
+    tctx.beginPath(); let started = false;
+    for (let k = 0; k < N; k++) { if (s[k] < 0) { started = false; continue; } if (!started) { tctx.moveTo(x(k), y(s[k])); started = true; } else tctx.lineTo(x(k), y(s[k])); }
+    tctx.strokeStyle = si ? "#58A6FF" : "#5C6370"; tctx.lineWidth = si ? 1.8 : 1.2; tctx.stroke();
+  }
+  tctx.font = "bold 10px sans-serif"; tctx.textAlign = "center";
+  for (const d of DEATHS) {  // enemy deaths along the top, teammate deaths below them
+    tctx.fillStyle = d.p < 5 ? TEAM[d.p] : ENEMY;
+    tctx.fillText("✕", x(d.step), d.p < 5 ? 22 : 11);
+  }
+  if (D.plantStep >= 0) { tctx.fillStyle = "#F85149"; tctx.fillRect(x(D.plantStep) - 1, 0, 2, h); }
+  tctx.fillStyle = "#58A6FF22"; tctx.fillRect(pad, 0, x(playhead) - pad, h);
+  tctx.fillStyle = "#fff"; tctx.fillRect(x(playhead) - 1, 0, 2, h);
+  tctx.fillStyle = "#8B94A3"; tctx.font = "10px Inter, sans-serif"; tctx.textAlign = "right";
+  tctx.fillText("team error 10 s ahead · blue: best of 6 · grey: most likely · ✕ deaths (top: enemies, below: your team)", w - pad, h - 4);
+}
+function seekFromEvent(e) { const r = tl.getBoundingClientRect(); const k = (e.clientX - r.left - 8) / (r.width - 16); playhead = clamp(k * (N - 1), 0, N - 1); }
+let seeking = false;
+tl.addEventListener("mousedown", e => { seeking = true; seekFromEvent(e); });
+window.addEventListener("mousemove", e => { if (seeking) seekFromEvent(e); });
+window.addEventListener("mouseup", () => { seeking = false; });
+
+// ---------------------------------------------------------------- controls
+function setPlaying(v) { playing = v; if (v && playhead >= N - 1) playhead = 0; $("bplay").textContent = v ? "⏸ Pause" : "▶ Play"; }
+$("bplay").onclick = () => setPlaying(!playing);
+$("bstart").onclick = () => { playhead = 0; };
+$("bend").onclick = () => { playhead = N - 1; setPlaying(false); };
+$("bback").onclick = () => { setPlaying(false); playhead = Math.max(0, Math.ceil(playhead) - 1); };
+$("bfwd").onclick = () => { setPlaying(false); playhead = Math.min(N - 1, Math.floor(playhead) + 1); };
+window.addEventListener("keydown", e => {
+  if (e.code === "Space") { e.preventDefault(); setPlaying(!playing); }
+  else if (e.code === "ArrowRight") $("bfwd").onclick();
+  else if (e.code === "ArrowLeft") $("bback").onclick();
+  else if (e.code === "Home") $("bstart").onclick();
+  else if (e.code === "End") $("bend").onclick();
+});
+function seg(container, items, get, set) {
+  const box = typeof container === "string" ? $(container) : container; box.innerHTML = "";
+  for (const [label, value] of items) {
+    const b = el("button", get() === value ? "on" : "", label);
+    b.onclick = () => { set(value); for (const c of box.children) c.classList.remove("on"); b.classList.add("on"); };
+    box.appendChild(b);
+  }
+  return box;
+}
+seg("speed", [["0.5x", 0.5], ["1x", 1], ["2x", 2], ["4x", 4]], () => speed, v => { speed = v; });
+const tb = $("toolbar");
+tb.appendChild(seg(el("div", "seg"), [["All paths", "all"], ["Top path", "top"], ["No paths", "none"]], () => opt.paths, v => { opt.paths = v; }));
+tb.appendChild(seg(el("div", "seg"), [["True enemies", false], ["Team's view", true]], () => opt.team, v => { opt.team = v; last = null; }));
+for (const [key, label] of [["truth", "What happened"], ["nades", "Grenades"], ["view", "View"], ["names", "Names"], ["callouts", "Callouts"]]) {
+  const b = el("button", "tog" + (opt[key] ? " on" : ""), label);
+  b.onclick = () => { opt[key] = !opt[key]; b.classList.toggle("on", opt[key]); };
+  tb.appendChild(b);
+}
+$("legend").innerHTML = "Arrows: predicted 10 s paths (bolder = likelier) · dashed: what happened · red: enemies (faded = hidden) · dashed ring: last seen · ringed ✕: death (both teams) · scroll to zoom, drag to pan";
+
+// ---------------------------------------------------------------- loop
+let prev = performance.now();
+function frame(now) {
+  const dt = Math.min(0.1, (now - prev) / 1000); prev = now;
+  if (playing) {
+    playhead += dt * speed / D.stepSeconds;
+    if (playhead >= N - 1) { playhead = N - 1; setPlaying(false); }
+  }
+  const [i] = stepPair();
+  $("clock").textContent = fmtClock(lerp(D.clock[i], D.clock[Math.min(i + 1, N - 1)], playhead - i));
+  draw(); drawTimeline(); renderFeed(); renderSide(Math.round(playhead) >= N ? N - 1 : Math.min(Math.round(playhead), N - 1));
+  requestAnimationFrame(frame);
+}
+window.addEventListener("resize", resize);
+resize(); img.onload = () => {}; requestAnimationFrame(frame);
+</script>
+</body>
+</html>
