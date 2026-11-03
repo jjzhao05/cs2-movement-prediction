@@ -125,7 +125,7 @@ is saved in `assets/`. The original radar is offered as a second map style.
 
 ### Training on Delta
 
-Parsing stays local (it needs `data/` and awpy); only `processed/` (~270 MB) goes to the cluster.
+Parsing stays local (it needs `data/` and awpy); only `processed/` (~380 MB) goes to the cluster.
 Keep the repo on project storage rather than home, e.g. `/projects/<account>/$USER/`.
 
 ```bash
@@ -159,50 +159,69 @@ transfer the other way and use `visualize.py` / `app.py` locally. After reparsin
 
 ## Data
 
-Matches are from across October 2026: 269 series across 38 tournaments, each series
-contributing exactly one Mirage map (**269 maps total**).
+Matches are from across October 2026: **416 Mirage maps** from 410 series across 56 tournaments,
+stored as 420 demos (a few maps were recorded in two parts). That is 8,798 rounds and about
+1.45 M steps, split by match into 335 train / 41 val / 44 test demos.
 
 | Tournament | Maps |
 |---|---|
+| ESL Pro League Season 24 | 25 |
 | Digital Crusade Draculan Season 7 | 22 |
+| ROG Journey Autumn 2026 | 19 |
 | CCT 2026 South America Series 7 | 18 |
+| PGL Masters Bucharest 2026 | 18 |
+| CCT 2026 Europe Series 12 | 17 |
+| ESL Challenger League Season 52 – Europe Cup 8 | 16 |
+| ESL Challenger League Season 52 – North America Cup 3 | 16 |
+| CCT 2026 Europe Series 10 | 15 |
+| CCT 2026 Europe Series 11 Closed Qualifier | 15 |
 | NODWIN Clutch Series 13 | 14 |
-| PGL Masters Bucharest 2026 | 14 |
 | Winline MPKBK CIS LAN Season 9 | 14 |
-| CCT 2026 Europe Series 11 Closed Qualifier | 13 |
-| CCT 2026 Europe Series 12 | 13 |
 | CCT 2026 Europe Series 12 Closed Qualifier | 13 |
 | CCT 2026 Europe Series 11 | 12 |
-| ESL Challenger League Season 52 – North America Cup 3 | 12 |
 | Stake Pulse Beat III | 12 |
 | CCT 2026 Challengers Europe Series 8 | 10 |
+| ESL Challenger League Season 52 – Asia-Pacific Cup 3 | 9 |
+| NODWIN Clutch Series 13 Closed Qualifier | 9 |
 | FRAG University 2026 | 8 |
+| Fox Legacy Season 1 | 8 |
+| Stake Ranked Episode 4 | 8 |
 | Stake Ranked Episode 6 Closed Qualifier | 8 |
 | Thunderpick World Championship 2026 | 8 |
 | 1win Private Club Season 2 | 7 |
-| ESL Challenger League Season 52 – Asia-Pacific Cup 3 | 7 |
-| ESL Challenger League Season 52 – Europe Cup 8 | 6 |
-| NODWIN Clutch Series 13 Closed Qualifier | 6 |
+| FiRE Last Chance 2026 | 7 |
+| ESL Challenger League Season 52 – South America Cup 3 | 6 |
+| RLG Tesla Cup 2026 | 6 |
+| 1win Private Club Season 2 Closed Qualifier | 5 |
+| CCT 2026 Challengers Europe Series 7 | 5 |
 | Circuit X Curitiba Season 4 | 5 |
-| ESL Challenger League Season 52 – South America Cup 3 | 5 |
-| RLG Tesla Cup 2026 | 5 |
-| 1win Private Club Season 2 Closed Qualifier | 4 |
+| HyperX Retake Season 13 | 5 |
+| Stake Ranked Episode 5 | 5 |
+| ESN Fall Showdown 2026 | 4 |
 | Elisa Breakout Series 2 | 4 |
-| ESL Pro League Season 24 | 4 |
 | Gluck Yungstar 2026 Series 3 | 4 |
-| CCT 2026 Europe Series 10 | 3 |
+| CCT 2026 Europe Series 13 Closed Qualifier | 3 |
+| CCT 2026 South America Series 6 | 3 |
+| Crossfire Season 6 | 3 |
 | ESL Challenger League Season 52 – Europe Cup 9 | 3 |
-| Stake Ranked Episode 5 | 3 |
+| Roman Imperium Cup IX | 3 |
+| CCT 2026 Contenders Europe Series 10 | 2 |
+| CIS Esports League CyberClash Season 1 | 2 |
+| CIS Esports League CyberClash Season 2 | 2 |
 | DFRAG Invitational 2026 | 2 |
 | ESL Challenger League Season 52 – Oceania Cup 3 | 2 |
+| Gamers Club Masters VII | 2 |
+| Mesa Pro Series Halloween Cup 2026 | 2 |
 | NSTLGA Emerald Cup 2026 | 2 |
 | ANZC Locals Brisbane 2026 Season 2 | 1 |
-| CIS Esports League CyberClash Season 2 | 1 |
 | DFRAG Logitech G Pro Series 2026 | 1 |
+| Gluck Moscow Cyber Games 2026 | 1 |
+| GoExanimo Battle of Baltics 2026 | 1 |
+| Icelandic Esports LD Challengers Series 1 Finals | 1 |
 | MaceMedia Void Autumn Cup 2026 | 1 |
-| Mesa Pro Series Halloween Cup 2026 | 1 |
-| Roman Imperium Cup IX | 1 |
-| **Total** | **269** |
+| NSTLGA Texas Open 2026 | 1 |
+| Winline MPKBK CIS LAN Season 8 | 1 |
+| **Total** | **416** |
 
 Sampled every **0.5 s** of live play, per round:
 
