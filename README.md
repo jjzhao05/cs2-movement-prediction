@@ -38,6 +38,7 @@ and is compared against simple baselines.
 | `build_map.py` | Draws the Mirage map in `assets/` from the game's radar |
 | `main.py` | Runs extract → dataset → sql → baselines |
 | `run_notebook.py` | Executes a notebook in place (used for `baselines.ipynb`) |
+| `delta/` | Setup and Slurm jobs for training on NCSA Delta ([Training on Delta](#training-on-delta)) |
 
 ---
 
@@ -122,35 +123,86 @@ The map is drawn by `build_map.py` from the game's own Mirage radar (awpy's data
 recoloured to the app's dark theme, with callout labels placed from `processed/`. The result
 is saved in `assets/`. The original radar is offered as a second map style.
 
+### Training on Delta
+
+Parsing stays local (it needs `data/` and awpy); only `processed/` (~270 MB) goes to the cluster.
+Keep the repo on project storage rather than home, e.g. `/projects/<account>/$USER/`.
+
+```bash
+# on a Delta login node (login.delta.ncsa.illinois.edu), once
+mkdir -p /projects/<account>/$USER && cd /projects/<account>/$USER
+git clone https://github.com/jjzhao05/cs2-movement-prediction.git && cd cs2-movement-prediction
+bash delta/setup.sh                 # venv in ~/venvs/cs2 with CUDA PyTorch
+echo 'export ACCOUNT=<account>-delta-gpu' >> ~/.bashrc && source ~/.bashrc   # `accounts` lists yours
+```
+
+Copy `processed/` into the clone with [Globus](https://www.globus.org) (Delta asks for it rather
+than `scp`): run Globus Connect Personal on this machine, then in the Globus web app transfer
+`processed/` from your personal endpoint to the *NCSA Delta* collection at
+`/projects/<account>/<user>/cs2-movement-prediction/processed/`.
+
+```bash
+# on Delta
+bash delta/submit.sh smoke          # 1 epoch on 20 rounds: checks venv, GPU and data
+bash delta/submit.sh all            # transformer, its 3 ablations and the GRU, one GPU job each
+squeue -u $USER                     # queue; output in logs/slurm-<name>-<jobid>.out
+```
+
+Each job runs `delta/train.slurm`: one GPU on `gpuA40x4` (change `PARTITION` / `TIME` in
+`delta/config.sh`), 16 CPUs, 64 GB. Ten minutes before the time limit it stops, requeues itself
+and continues from the last finished epoch with `--resume`, so long runs need no babysitting;
+every restart appends to the same log. Bring `checkpoints/` and `logs/` back with a Globus
+transfer the other way and use `visualize.py` / `app.py` locally. After reparsing, copy `processed/` again and delete
+`checkpoints/*.last.pt` on Delta before submitting, so no job resumes a run trained on the old data.
+
 ---
 
 ## Data
 
-**Matches** are from **Oct 19–28, 2026**: 133 series across 19 tournaments, each series
-contributing exactly one Mirage map (**133 maps total**).
+Matches are from across October 2026: 269 series across 38 tournaments, each series
+contributing exactly one Mirage map (**269 maps total**).
 
 | Tournament | Maps |
 |---|---|
 | Digital Crusade Draculan Season 7 | 22 |
+| CCT 2026 South America Series 7 | 18 |
+| NODWIN Clutch Series 13 | 14 |
 | PGL Masters Bucharest 2026 | 14 |
 | Winline MPKBK CIS LAN Season 9 | 14 |
+| CCT 2026 Europe Series 11 Closed Qualifier | 13 |
 | CCT 2026 Europe Series 12 | 13 |
-| CCT 2026 South America Series 7 | 10 |
-| CCT 2026 Challengers Europe Series 8 | 8 |
-| NODWIN Clutch Series 13 | 8 |
+| CCT 2026 Europe Series 12 Closed Qualifier | 13 |
+| CCT 2026 Europe Series 11 | 12 |
+| ESL Challenger League Season 52 – North America Cup 3 | 12 |
+| Stake Pulse Beat III | 12 |
+| CCT 2026 Challengers Europe Series 8 | 10 |
+| FRAG University 2026 | 8 |
 | Stake Ranked Episode 6 Closed Qualifier | 8 |
+| Thunderpick World Championship 2026 | 8 |
 | 1win Private Club Season 2 | 7 |
-| CCT 2026 Europe Series 11 | 7 |
+| ESL Challenger League Season 52 – Asia-Pacific Cup 3 | 7 |
+| ESL Challenger League Season 52 – Europe Cup 8 | 6 |
+| NODWIN Clutch Series 13 Closed Qualifier | 6 |
 | Circuit X Curitiba Season 4 | 5 |
+| ESL Challenger League Season 52 – South America Cup 3 | 5 |
 | RLG Tesla Cup 2026 | 5 |
+| 1win Private Club Season 2 Closed Qualifier | 4 |
+| Elisa Breakout Series 2 | 4 |
+| ESL Pro League Season 24 | 4 |
+| Gluck Yungstar 2026 Series 3 | 4 |
+| CCT 2026 Europe Series 10 | 3 |
 | ESL Challenger League Season 52 – Europe Cup 9 | 3 |
 | Stake Ranked Episode 5 | 3 |
-| CCT 2026 Europe Series 12 Closed Qualifier | 2 |
 | DFRAG Invitational 2026 | 2 |
-| PGL Bucharest 2027 Closed Qualifier | 2 |
+| ESL Challenger League Season 52 – Oceania Cup 3 | 2 |
+| NSTLGA Emerald Cup 2026 | 2 |
+| ANZC Locals Brisbane 2026 Season 2 | 1 |
+| CIS Esports League CyberClash Season 2 | 1 |
+| DFRAG Logitech G Pro Series 2026 | 1 |
 | MaceMedia Void Autumn Cup 2026 | 1 |
 | Mesa Pro Series Halloween Cup 2026 | 1 |
-| **Total** | **133** |
+| Roman Imperium Cup IX | 1 |
+| **Total** | **269** |
 
 Sampled every **0.5 s** of live play, per round:
 

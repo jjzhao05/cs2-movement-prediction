@@ -586,7 +586,7 @@ def process_demo_safe(path: Path, out_path: Path) -> dict:
 
 def match_id(stem: str) -> str:
     """Maps of the same series share a match id so they land in the same split."""
-    return re.sub(r"(-m\d+)?-mirage(_\d+)?$", "", stem)
+    return re.sub(r"(-m\d+)?-mirage(-p\d+)?(_\d+)?$", "", stem)
 
 
 def assign_split(stem: str, val_frac: float, test_frac: float, seed: int) -> str:

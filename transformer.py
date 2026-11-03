@@ -636,7 +636,7 @@ def main():
     manifest = train.manifest
 
     if args.eval_only:
-        ckpt = torch.load(out, map_location="cpu")
+        ckpt = torch.load(out, map_location="cpu", weights_only=False)
         model = MirageTransformer(Config(**ckpt["config"])).to(device)
         model.load_state_dict(ckpt["state"])
     else:
@@ -705,7 +705,7 @@ def main():
                 log(log_path, f"early stop: no improvement for {args.patience} epochs")
                 break
         log(log_path, f"trained {len(history)} epochs in {time.perf_counter() - start_all:.0f}s, best val minADE@6 (10s) {best:.1f}")
-        model.load_state_dict(torch.load(out, map_location="cpu")["state"])
+        model.load_state_dict(torch.load(out, map_location="cpu", weights_only=False)["state"])
 
     start = time.perf_counter()
     maps = MapLookup(data["train"])

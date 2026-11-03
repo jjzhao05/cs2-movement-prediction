@@ -17,7 +17,7 @@ Slots 0-4 are the T side and 5-9 the CT side, as in the .npz files.
 
 The database is updated incrementally: demos in the manifest that are not in
 the database yet are added, demos that left the manifest are removed, and the
-split column is refreshed. Each demo is loaded in its own transaction, so an
+match and split columns are refreshed. Each demo is loaded in its own transaction, so an
 interrupted run leaves only whole demos behind. Use --rebuild after
 reprocessing demos with build_dataset.py --overwrite or changing features.py.
 
@@ -316,10 +316,10 @@ def main():
         conn.execute("COMMIT")
         print(f"Removed {file} (no longer in the manifest)")
 
-    # Splits are a hash of the match name, so they only change with --seed or the fractions.
+    # Splits are a hash of the match name, so they change with --seed, the fractions or match_id.
     conn.executemany(
-        "UPDATE demos SET split = ? WHERE file = ? AND split != ?",
-        [(wanted[file]["split"], file, wanted[file]["split"]) for file in loaded if file in wanted],
+        "UPDATE demos SET match = ?, split = ? WHERE file = ? AND (match != ? OR split != ?)",
+        [(e["match"], e["split"], file, e["match"], e["split"]) for file in loaded if (e := wanted.get(file))],
     )
 
     new = [entry for entry in manifest["demos"] if entry["file"] not in loaded]

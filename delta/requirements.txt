@@ -1,0 +1,4 @@
+# What transformer.py and gru.py need on the cluster (torch is installed separately by setup.sh).
+numpy>=2.0
+scipy
+scikit-learn
