@@ -137,6 +137,24 @@ def pick_roster(round_ticks: pl.DataFrame):
     return roster
 
 
+def plant_site(round_bomb):
+    """"A" / "B" for the round's plant, or "" if unknown.
+
+    awpy's rounds["bomb_site"] compares bomb_planted's `site` to a hardcoded 220,
+    but `site` is a per-demo entity index, so nearly every plant came out as B.
+    The planter's place name (demo.bomb's `bombsite`) is reliable; the plant
+    position (A is on the low-Y half of Mirage) is the fallback.
+    """
+    plants = round_bomb.filter(pl.col("event") == "plant").sort("tick")
+    if plants.is_empty():
+        return ""
+    place = (plants["bombsite"][0] or "").lower()
+    if place in ("bombsitea", "bombsiteb"):
+        return place[-1].upper()
+    y = plants["Y"][0]
+    return "" if y is None else ("A" if y < -1000 else "B")
+
+
 def bomb_state(round_bomb, sample_ticks, has_bomb, rnd, tickrate):
     """Per-step dropped / planted state and bomb position.
 
@@ -152,12 +170,12 @@ def bomb_state(round_bomb, sample_ticks, has_bomb, rnd, tickrate):
     planted = np.zeros(T, bool)
     plant_tick = rnd["bomb_plant"]
     if plant_tick is not None:
+        site = plant_site(round_bomb)
         planted = sample_ticks >= plant_tick
         glob[planted, G["bomb_planted"]] = 1
         glob[planted, G["time_since_plant"]] = (sample_ticks[planted] - plant_tick) / tickrate
-        site = (rnd["bomb_site"] or "").lower()
-        glob[planted, G["plant_site_a"]] = site.endswith("_a")
-        glob[planted, G["plant_site_b"]] = site.endswith("_b")
+        glob[planted, G["plant_site_a"]] = site == "A"
+        glob[planted, G["plant_site_b"]] = site == "B"
     dropped = ~planted & ~(has_bomb > 0).any(1)
     glob[dropped, G["bomb_dropped"]] = 1
 
@@ -519,7 +537,7 @@ def process_demo(path: Path, out_path: Path) -> dict:
         "damages": demo.damages.select("tick", "round_num", "attacker_steamid", "victim_steamid", "dmg_health_real"),
         "kills": demo.kills.select("tick", "round_num", "attacker_steamid"),
         "footsteps": demo.footsteps.select("tick", "round_num", "player_steamid"),
-        "bomb": demo.bomb.select("tick", "round_num", "event", "steamid", "X", "Y", "Z"),
+        "bomb": demo.bomb.select("tick", "round_num", "event", "steamid", "bombsite", "X", "Y", "Z"),
         "smokes": demo.smokes,
         "infernos": demo.infernos,
     }
