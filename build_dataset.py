@@ -307,7 +307,9 @@ def utility_tokens(smokes, infernos, throws, sample_ticks, tickrate, slot_of):
 def build_round(rnd, round_ticks, round_state, tables, throws, weapons, places, step_ticks, tickrate):
     """round_ticks: light props at every tick of the round; round_state: all props at sample ticks."""
     freeze_end, end = rnd["freeze_end"], rnd["end"]
-    sample_ticks = np.arange(freeze_end, end + 1, step_ticks, dtype=np.int64)
+    # Up to the first sample at or after the round end, so the last step holds the kill, defuse
+    # or explosion that ended the round (ticks after `end` aren't in the round, so it reads the end state).
+    sample_ticks = np.arange(freeze_end, end + step_ticks, step_ticks, dtype=np.int64)
     T = len(sample_ticks)
 
     roster = pick_roster(round_ticks)
@@ -342,7 +344,7 @@ def build_round(rnd, round_ticks, round_state, tables, throws, weapons, places, 
     if stale.any():
         return f"state of a living player is {age[stale].max()} ticks old at step {steps[stale].min()}"
     clock = state.group_by("step").agg(pl.col("game_time").max()).sort("step")["game_time"].to_numpy()
-    paused = np.flatnonzero(np.diff(clock) < STEP_SECONDS / 2)
+    paused = np.flatnonzero(np.diff(clock[:-1]) < STEP_SECONDS / 2)  # the last step's clock stops at the round end
     if len(paused):
         return f"game clock stops at step {paused[0] + 1} (paused)"
 
@@ -506,7 +508,7 @@ def parse_demo(demo, sample_seconds: float):
     wanted = set()
     for rnd in demo.rounds.iter_rows(named=True):
         if rnd["freeze_end"] is not None and rnd["end"] is not None and rnd["end"] > rnd["freeze_end"]:
-            sample = np.arange(rnd["freeze_end"], rnd["end"] + 1, step_ticks)
+            sample = np.arange(rnd["freeze_end"], rnd["end"] + step_ticks, step_ticks)  # same samples as build_round
             idx = np.searchsorted(present, sample, side="right") - 1
             idx = idx[idx >= 0]
             for back in (0, 1, 2):

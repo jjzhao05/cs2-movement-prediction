@@ -3,9 +3,16 @@ magicEnabled = false
 
 [theme]
 base = "dark"
-primaryColor = "#58A6FF"
-backgroundColor = "#0E1117"
-secondaryBackgroundColor = "#161A22"
+primaryColor = "#DADDE1"
+backgroundColor = "#0F1114"
+secondaryBackgroundColor = "#15181C"
+textColor = "#DADDE1"
+borderColor = "#272B31"
+baseRadius = "2px"
+font = "Barlow:https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&display=swap"
+
+[theme.sidebar]
+backgroundColor = "#15181C"
 
 [browser]
 gatherUsageStats = false

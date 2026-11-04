@@ -18,6 +18,7 @@ original radar is a second style when its data is in ~/.awpy/<version>/.
 import base64
 import io
 import json
+import re
 import sys
 import warnings
 from pathlib import Path
@@ -30,17 +31,41 @@ from build_map import find_radar
 from visualize import MAP, SIDES, col, errors, load
 
 ROOT = Path(__file__).parent
-SIDE_COLORS = {"T": "#E3B341", "CT": "#5DADE2"}
+SIDE_COLORS = {"T": "orange", "CT": "blue"}  # Streamlit markdown colours
 PLAYER = ROOT / "assets" / "replay.html"
-BG = "#0E1117"
+BG = "#0F1114"
 UTILITY_KINDS = ("smoke", "inferno", "flash", "he", "decoy")
+ICONS = ROOT / "assets" / "icons"  # CS2 HUD icons (weapons/, hud/) from github.com/lexogrine/cs2-react-hud
+# weapon_vocab name -> weapons/<file>.svg; knives without their own icon use the default one.
+WEAPON_ICONS = {
+    "AK-47": "ak47", "AUG": "aug", "AWP": "awp", "Bayonet": "knife_bayonet", "Bowie Knife": "knife_survival_bowie",
+    "Butterfly Knife": "knife_butterfly", "C4 Explosive": "c4", "CZ75-Auto": "cz75a", "Classic Knife": "knife_css",
+    "Decoy Grenade": "decoy", "Desert Eagle": "deagle", "Dual Berettas": "elite", "FAMAS": "famas",
+    "Falchion Knife": "knife_falchion", "Five-SeveN": "fiveseven", "Flashbang": "flashbang", "Flip Knife": "knife_flip",
+    "Galil AR": "galilar", "Glock-18": "glock", "Gut Knife": "knife_gut", "High Explosive Grenade": "hegrenade",
+    "Huntsman Knife": "knife_tactical", "Incendiary Grenade": "incgrenade", "Karambit": "knife_karambit",
+    "Kukri Knife": "knife", "M4A1-S": "m4a1_silencer", "M4A4": "m4a1", "M9 Bayonet": "knife_m9_bayonet",
+    "MAC-10": "mac10", "MAG-7": "mag7", "MP5-SD": "mp5sd", "MP7": "mp7", "MP9": "mp9", "Molotov": "molotov",
+    "Navaja Knife": "knife_gypsy_jackknife", "Negev": "negev", "Nomad Knife": "knife_outdoor", "Nova": "nova",
+    "P2000": "hkp2000", "P250": "p250", "P90": "p90", "Paracord Knife": "knife_cord", "R8 Revolver": "revolver",
+    "SSG 08": "ssg08", "Sawed-Off": "sawedoff", "Shadow Daggers": "knife_push", "Skeleton Knife": "knife_skeleton",
+    "Smoke Grenade": "smokegrenade", "Stiletto Knife": "knife_stiletto", "Survival Knife": "knife_canis",
+    "Talon Knife": "knife_widowmaker", "Tec-9": "tec9", "UMP-45": "ump45", "USP-S": "usp_silencer",
+    "Ursus Knife": "knife_ursus", "XM1014": "xm1014", "Zeus x27": "taser", "knife": "knife", "knife_t": "knife_t",
+    "M249": "m249", "G3SG1": "g3sg1", "SCAR-20": "scar20", "SG 553": "sg556", "PP-Bizon": "bizon",
+}
+HUD_ICONS = {"armor": "icon_armor_full_default", "helmet": "icon_armor_helmet_default", "bomb": "icon_c4_default",
+             "kit": "icon_defuse_default", "skull": "icon_skull_default"}
+GRENADE_ICONS = ("flashbang", "smokegrenade", "hegrenade", "molotov")  # the order of the payload's "nades"
+# Sidebar settings -> the player's options.
+PATHS = {"All": "all", "Top": "top", "None": "none"}
+ENEMIES = {"True positions": False, "Team's view": True}
+LAYERS = {"What happened": "truth", "Grenades": "nades", "View": "view", "Names": "names", "Callouts": "callouts"}
 
-st.set_page_config(page_title="Mirage Replay", page_icon="🗺️", layout="wide")
+st.set_page_config(page_title="Mirage replay", page_icon=":material/map:", layout="wide")
 st.markdown("""
 <style>
 .block-container {padding-top: 2.6rem; padding-bottom: 0.5rem; max-width: 100%;}
-.badge {display:inline-block; padding:2px 9px; border-radius:999px; font-size:0.78rem; font-weight:600; margin-right:6px;}
-.psub {color:#8B94A3; font-size:0.8rem;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -159,6 +184,21 @@ def prediction_files():
     return [str(p) for p in extra + files]
 
 
+@st.cache_data(show_spinner=False)
+def icons():
+    """{name: [data URI, width / height]} for the player, drawn as masks so they take the text colour."""
+    out = {}
+    for name, path in [(n, ICONS / "hud" / f"{f}.svg") for n, f in HUD_ICONS.items()] + \
+                      [(f, ICONS / "weapons" / f"{f}.svg") for f in {*WEAPON_ICONS.values(), *GRENADE_ICONS}]:
+        if not path.exists():
+            continue
+        svg = path.read_bytes()
+        box = re.search(rb'viewBox="([^"]+)"', svg)
+        w, h = [float(v) for v in box.group(1).replace(b",", b" ").split()[2:]] if box else (1.0, 1.0)
+        out[name] = ["data:image/svg+xml;base64," + base64.b64encode(svg).decode(), round(w / h, 3)]
+    return out
+
+
 # ---------------------------------------------------------------------- round data for the player
 
 @st.cache_data(show_spinner="Preparing round…", max_entries=24)
@@ -202,6 +242,9 @@ def round_payload(path: str, i: int, style: str):
         warnings.simplefilter("ignore", RuntimeWarning)  # steps where nobody has a 10 s future
         team_min = np.nanmean(np.where(ok, fde_min[s, :, h10], np.nan), 1)
         team_top = np.nanmean(np.where(ok, fde_top[s, :, h10], np.nan), 1)
+    # Main weapon: the primary, else the pistol, else whatever is in hand (0 = <none> in weapon_vocab).
+    cat = data["player_cat"][s]
+    main_weapon = np.where(cat[..., 2] > 0, cat[..., 2], np.where(cat[..., 3] > 0, cat[..., 3], cat[..., 0]))
     uri, extent = radar_image(path, style)
     winner = int(data["rounds_winner"][i])
     return json.dumps({
@@ -218,7 +261,7 @@ def round_payload(path: str, i: int, style: str):
         "hp": ints(Pf("health")), "armor": ints(Pf("armor")), "helmet": ints(Pf("has_helmet")), "kit": ints(Pf("has_defuser")),
         "yaw": ints(Pf("yaw")), "money": ints(Pf("money")), "hasBomb": ints(Pf("has_bomb")),
         "nades": np.stack([Pf(k) for k in ("n_flash", "n_smoke", "n_he", "n_molotov")], -1).astype(int).tolist(),
-        "weapon": data["player_cat"][s][:, :, 0].astype(int).tolist(), "place": data["player_cat"][s][:, :, 1].astype(int).tolist(),
+        "weapon": main_weapon.astype(int).tolist(), "place": data["player_cat"][s][:, :, 1].astype(int).tolist(),
         "visible": data["enemy_visible"][s].astype(int).tolist(),
         "lastSeen": [[None if np.isnan(seen_age[t, p]) else [*last_seen[t, p].tolist(), round(float(seen_age[t, p]), 1)]
                       for p in range(10)] for t in range(n)],
@@ -237,14 +280,38 @@ def round_payload(path: str, i: int, style: str):
 
 # ---------------------------------------------------------------------- app
 
+def match_index(rounds):
+    """{match: {round number: {side: index into rounds}}}, matches and rounds in order."""
+    out = {}
+    for r in sorted(rounds, key=lambda r: (r["match"], r["round"])):
+        out.setdefault(r["match"], {}).setdefault(r["round"], {}).setdefault(r["side"], r["index"])
+    return out
+
+
+def first_round(by_match):
+    st.session_state.round = next(iter(by_match[st.session_state.match]))
+
+
+def step_round(by_match, delta):
+    """Prev / Next: the neighbouring round, crossing into the neighbouring match at either end."""
+    state, matches = st.session_state, list(by_match)
+    round_nums = list(by_match[state.match])
+    k = round_nums.index(state.round) + delta
+    if 0 <= k < len(round_nums):
+        state.round = round_nums[k]
+        return
+    m = matches.index(state.match) + delta
+    if 0 <= m < len(matches):
+        state.match = matches[m]
+        state.round = list(by_match[state.match])[0 if delta > 0 else -1]
+
+
 def main():
     files = prediction_files()
     with st.sidebar:
-        st.markdown("## 🗺️ Mirage Replay")
+        st.markdown("### Mirage replay")
         if files:
-            path = st.selectbox("Model", files, format_func=model_name,
-                                help="Every .predictions_<split>.npz in checkpoints/: the transformer (transformer.py) "
-                                     "and the baselines (last cells of baselines.ipynb).")
+            path = st.selectbox("Model", files, format_func=model_name)
         else:
             path = st.text_input("Predictions file", placeholder="checkpoints/transformer_full.predictions_test.npz")
         if not path or not Path(path).exists():
@@ -255,30 +322,15 @@ def main():
         data, fde_min, fde_top, valid = open_file(path)
         rounds = round_table(path)
 
-        st.markdown("#### Round")
-        matches = sorted({r["match"] for r in rounds})
-        match = st.selectbox("Match", ["All matches"] + matches)
-        c1, c2 = st.columns(2)
-        side = c1.segmented_control("Side", ["T", "CT"], selection_mode="multi", default=["T", "CT"])
-        result = c2.segmented_control("Result", ["Won", "Lost"], selection_mode="multi", default=["Won", "Lost"])
-        sort = st.selectbox("Sort by", ["Match order", "Hardest to predict", "Easiest to predict", "Longest"])
-        shown = [r for r in rounds if (match == "All matches" or r["match"] == match)
-                 and r["side"] in (side or SIDES) and (r["result"] in (result or ["Won", "Lost"]) or r["result"] == "?")]
-        key = {"Hardest to predict": lambda r: -np.nan_to_num(r["err10"]),
-               "Easiest to predict": lambda r: np.nan_to_num(r["err10"], nan=1e9), "Longest": lambda r: -r["length"]}.get(sort)
-        if key:
-            shown = sorted(shown, key=key)
-        if not shown:
-            st.warning("No rounds match these filters.")
-            st.stop()
-        label = lambda r: (f"R{r['round']} · {r['team']} ({r['side']}) vs {r['enemy']} · {r['result']}"  # noqa: E731
-                           + ("" if np.isnan(r["err10"]) else f" · {r['err10']:.0f}u"))
-        i = st.selectbox(f"Round ({len(shown)})", [r["index"] for r in shown], format_func=lambda k: label(rounds[k]))
-
-        st.markdown("#### View")
+        # Display settings: widgets keep their values across reruns, so every round opens with them.
+        st.markdown("#### Settings")
+        paths = st.segmented_control("Predicted paths", list(PATHS), default="All", key="paths") or "All"
+        enemies = st.segmented_control("Enemies", list(ENEMIES), default="True positions", key="enemies") or "True positions"
+        layers = st.pills("Show", list(LAYERS), selection_mode="multi", default=list(LAYERS), key="layers")
         styles = map_styles()
-        style = (st.segmented_control("Map", styles, default=styles[0]) or styles[0]) if len(styles) > 1 else styles[0]
-        height = st.slider("Player height", 600, 1300, 860, 20)
+        style = (st.segmented_control("Map", styles, default=styles[0], key="style") or styles[0]) if len(styles) > 1 else styles[0]
+        height = st.slider("Player height", 600, 1300, 860, 20, key="height")
+        options = {"paths": PATHS[paths], "team": ENEMIES[enemies], **{key: name in layers for name, key in LAYERS.items()}}
 
         st.divider()
         h10 = data["horizons"][10] - 1
@@ -286,14 +338,45 @@ def main():
         st.caption(f"{len(rounds)} round views · best-of-6 error at 10 s **{fde_min[:, :, h10][ok].mean():.0f}u**, "
                    f"most likely path **{fde_top[:, :, h10][ok].mean():.0f}u** ({int(ok.sum()):,} predictions)")
 
+    # Round picker above the player: match, round slider, prev / next, and whose side to replay.
+    by_match = match_index(rounds)
+    matches = list(by_match)
+    state = st.session_state
+    # Keep the picked match / round / side across reruns, falling back when the file doesn't have them.
+    if state.get("match") not in by_match:
+        state.match = matches[0]
+    if state.get("round") not in by_match[state.match]:
+        state.round = next(iter(by_match[state.match]))
+    if state.get("side") is None:  # also when the side control is clicked off
+        state.side = state.get("side_last", "T")
+
+    c_match, c_round, c_prev, c_next, c_side = st.columns([2.2, 4, 0.9, 0.9, 1.2], vertical_alignment="bottom")
+    c_match.selectbox("Match", matches, key="match", on_change=first_round, args=(by_match,))
+    round_nums = list(by_match[state.match])
+    if len(round_nums) > 1:
+        c_round.select_slider("Round", round_nums, key="round", format_func=lambda n: f"R{n}")
+    k, m = round_nums.index(state.round), matches.index(state.match)
+    c_prev.button("Prev", icon=":material/chevron_left:", width="stretch", on_click=step_round, args=(by_match, -1),
+                  disabled=k == 0 and m == 0)
+    c_next.button("Next", icon=":material/chevron_right:", icon_position="right", width="stretch", on_click=step_round, args=(by_match, 1),
+                  disabled=k == len(round_nums) - 1 and m == len(matches) - 1)
+    views = by_match[state.match][state.round]
+    side = c_side.segmented_control("Side", SIDES, key="side")
+    if side not in views:  # only one side's view of this round was saved
+        side = next(iter(views))
+    state.side_last = side
+    i = views[side]
     r = rounds[i]
-    side_color = SIDE_COLORS[r["side"]]
-    result_color = {"Won": "#3FB950", "Lost": "#F85149"}.get(r["result"], "#8B94A3")
-    st.markdown(f"""<h3 style="margin:0 0 0.1rem">{r['team']} <span class="badge" style="background:{side_color}22;color:{side_color}">{r['side']}</span>
-vs {r['enemy']} · Round {r['round']} <span class="badge" style="background:{result_color}22;color:{result_color}">{r['result']}</span></h3>
-<div class="psub" style="margin-bottom:0.4rem">{r['match']} · {model_name(path)} · Space: play / pause · ← →: step · scroll: zoom · click a teammate to focus</div>""",
-                unsafe_allow_html=True)
-    html = PLAYER.read_text(encoding="utf-8").replace("/*__DATA__*/", round_payload(path, i, style), 1)
+
+    result = {"Won": ":green[won]", "Lost": ":red[lost]"}.get(r["result"], "result unknown")
+    st.markdown(f"#### {r['team']} vs {r['enemy']}, round {r['round']}")
+    st.caption(f":{SIDE_COLORS[r['side']]}[**{r['side']} side**] · {result} · {r['match']} · {model_name(path)}"
+               + ("" if np.isnan(r["err10"]) else f" · 10 s error {r['err10']:.0f}u"))
+    # The key lets the player pick up where it was when only the settings changed (that reloads it).
+    view = {"options": options, "key": f"{path}|{i}|{style}", "icons": icons(),
+            "weaponIcons": {name: WEAPON_ICONS[name] for name in data["weapon_vocab"].tolist() if name in WEAPON_ICONS}}
+    html = (PLAYER.read_text(encoding="utf-8").replace("/*__DATA__*/", round_payload(path, i, style), 1)
+            .replace("/*__VIEW__*/{}", json.dumps(view), 1))
     components.html(html, height=height, scrolling=False)
 
 
