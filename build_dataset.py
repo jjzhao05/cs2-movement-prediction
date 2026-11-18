@@ -339,8 +339,10 @@ def build_round(rnd, round_ticks, round_state, tables, throws, weapons, places, 
 
     # Refuse stale state: a living player's sample must come from within the last step,
     # and the game clock must keep running (a real mid-round pause would freeze everyone).
+    # The last step is sampled past the round end, so it reads the end state and may be up to a step older.
     age = (state["tick"] - state["source_tick"]).fill_null(np.iinfo(np.int32).max).to_numpy()
-    stale = (age >= step_ticks) & state["is_alive"].fill_null(False).to_numpy()
+    max_age = np.where(steps == T - 1, 2 * step_ticks, step_ticks)
+    stale = (age >= max_age) & state["is_alive"].fill_null(False).to_numpy()
     if stale.any():
         return f"state of a living player is {age[stale].max()} ticks old at step {steps[stale].min()}"
     clock = state.group_by("step").agg(pl.col("game_time").max()).sort("step")["game_time"].to_numpy()

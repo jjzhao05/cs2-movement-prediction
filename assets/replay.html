@@ -13,14 +13,20 @@
     font: 14px/1.35 "Barlow", "Segoe UI", system-ui, sans-serif; overflow: hidden; }
   #app { display: grid; grid-template-columns: minmax(0, 1fr) 330px; grid-template-rows: auto minmax(0, 1fr) auto;
     gap: 10px; height: 100%; padding: 2px; }
-  #hud { grid-column: 1 / 3; display: flex; align-items: center; gap: 22px; padding: 4px 4px 0; }
+  #hud { grid-column: 1 / 3; display: flex; align-items: center; gap: 26px; padding: 4px 4px 0; }
+  #title { margin-right: 10px; }
+  #title .t1 { font-size: 20px; font-weight: 700; white-space: nowrap; }
+  #title .t1 .vs { color: var(--muted); font-weight: 500; font-size: 15px; margin: 0 3px; }
+  #title .t2 { display: flex; gap: 14px; color: var(--muted); font-size: 12px; margin-top: 1px; }
+  #controls svg { width: 12px; height: 12px; fill: currentColor; display: block; }
+  #controls button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
   .stat .k { color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; }
   .stat .v { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
   .tag { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
   .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 2px; overflow: hidden; }
   .seg button, .tog { background: transparent; color: var(--muted); border: 0; padding: 5px 10px; font: inherit; font-size: 12px; cursor: pointer; }
   .seg button + button { border-left: 1px solid var(--line); }
-  .seg button.on, .tog.on { background: var(--panel2); color: var(--text); }
+  .seg button.on, .tog.on, #controls .seg button.on { background: var(--accent); color: var(--bg); font-weight: 700; }
   
   #mapwrap { position: relative; background: var(--bg); border: 1px solid var(--line); border-radius: 3px; overflow: hidden; min-height: 0; }
   #map { width: 100%; height: 100%; display: block; cursor: grab; }
@@ -34,12 +40,14 @@
   #feed div { background: #0F1114D9; border-left: 2px solid var(--line); border-radius: 0; padding: 3px 8px; font-size: 12px; }
   #legend { position: absolute; left: 10px; bottom: 8px; color: var(--muted); font-size: 11px; background: #0F1114CC;
     padding: 3px 7px; border-radius: 2px; }
-  #side { grid-row: 2 / 4; grid-column: 2; overflow-y: auto; min-height: 0; padding-right: 2px; }
-  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 3px; padding: 8px 10px; margin-bottom: 8px; }
+  /* still scrolls with the wheel when an open prediction card makes it taller, but shows no scrollbar */
+  #side { grid-row: 2 / 4; grid-column: 2; overflow-y: auto; min-height: 0; scrollbar-width: none; }
+  #side::-webkit-scrollbar { display: none; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 3px; padding: 5px 10px; margin-bottom: 6px; }
   .head { display: flex; justify-content: space-between; align-items: center; font-weight: 700; margin-bottom: 4px;
     text-transform: uppercase; letter-spacing: .04em; }
-  .prow { display: grid; grid-template-columns: 12px minmax(0, 1fr) 84px; gap: 8px; align-items: center; padding: 5px 4px;
-    border-top: 1px solid var(--line); cursor: pointer; }
+  .prow { display: grid; grid-template-columns: 12px minmax(0, 1fr) 84px; gap: 8px; align-items: center; padding: 3px 4px;
+    border-top: 1px solid var(--line); cursor: pointer; line-height: 1.25; }
   .prow:hover { background: var(--panel2); }
   .prow.focus { background: var(--panel2); box-shadow: inset 2px 0 0 var(--accent); }
   .prow.dead { opacity: .38; }
@@ -54,7 +62,13 @@
   .ic.gear { margin-left: 5px; }
   .ic.bomb { color: #F85149; }
   .ic.armor { --h: 1.15em; color: var(--text); }
-  .loadout { line-height: 1.6; }
+  /* weapon, grenades, gear and the hidden / visible note share one centre line, whatever their heights */
+  .loadout { display: flex; align-items: center; height: 17px; line-height: 1; }
+  .loadout .ic, .loadout .ic.wpn, .loadout .ic.nade { --h: 14px; vertical-align: 0; flex: 0 0 auto; }
+  .loadout .ic.wpn { margin-right: 8px; }
+  /* the other icons leave ~10% empty below their drawing; the flashbang's reaches its bottom edge */
+  .loadout .ic-flashbang { transform: translateY(-10%); }
+  .loadout .seen { margin-left: 6px; }
   .ic.skull { --h: 1em; color: var(--muted); margin-right: 5px; vertical-align: -0.15em; }
   .hp { height: 4px; background: #262A30; overflow: hidden; margin: 3px 0 2px; }
   .hp > div { height: 100%; }
@@ -64,23 +78,31 @@
   .bar .fill span { position: absolute; left: 6px; top: 0; line-height: 16px; font-size: 11px; color: #fff; text-shadow: 0 1px 2px #000; white-space: nowrap; }
   .errs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; }
   .errs div { background: var(--bg); border: 1px solid var(--line); border-radius: 2px; padding: 5px 7px; }
-  #bottom { grid-column: 1; display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; }
-  #bottom #timeline { flex: 1 1 320px; }
-  #controls { display: flex; gap: 5px; align-items: center; }
+  #bottom { grid-column: 1; }
+  #controls { display: flex; gap: 5px; align-items: center; margin-left: auto; }
   #controls button { height: 30px; min-width: 32px; border-radius: 2px; border: 1px solid var(--line); background: var(--panel);
     color: var(--text); cursor: pointer; font-size: 13px; padding: 0 9px; }
   #controls button.play { background: var(--accent); border-color: var(--accent); color: #0F1114; font-weight: 700; min-width: 84px; text-transform: uppercase; letter-spacing: .05em; }
-  #timeline { width: 100%; height: 64px; display: block; cursor: pointer; background: var(--panel); border: 1px solid var(--line); border-radius: 3px; }
+  #timeline { width: 100%; height: 140px; display: block; cursor: pointer; background: var(--panel); border: 1px solid var(--line); border-radius: 3px; }
   ::-webkit-scrollbar { width: 8px; } ::-webkit-scrollbar-thumb { background: #2A2E35; }
 </style>
 </head>
 <body>
 <div id="app">
   <div id="hud">
+    <div id="title"></div>
     <div class="stat"><div class="k">Round time</div><div class="v" id="clock">0:00.0</div></div>
     <div class="stat"><div class="k">Score</div><div class="v" id="score">0–0</div></div>
     <div class="stat"><div class="k">Alive</div><div class="v" id="alive">5v5</div></div>
     <div id="bombbadge"></div>
+    <div id="controls">
+      <button id="bstart" title="Start (Home)"><svg viewBox="0 0 16 16"><path d="M3 3h2v10H3zM13 3v10L6 8z"/></svg></button>
+      <button id="bback" title="Back 0.5 s (←)"><svg viewBox="0 0 16 16"><path d="M11 3v10L4 8z"/></svg></button>
+      <button id="bplay" class="play" title="Play / pause (Space)"></button>
+      <button id="bfwd" title="Forward 0.5 s (→)"><svg viewBox="0 0 16 16"><path d="M5 3v10l7-5z"/></svg></button>
+      <button id="bend" title="End (End)"><svg viewBox="0 0 16 16"><path d="M11 3h2v10h-2zM3 3v10l7-5z"/></svg></button>
+      <div class="seg" id="speed"></div>
+    </div>
   </div>
   <div id="mapwrap">
     <canvas id="map"></canvas>
@@ -91,14 +113,6 @@
   </div>
   <div id="side"></div>
   <div id="bottom">
-    <div id="controls">
-      <button id="bstart" title="Start (Home)">⏮</button>
-      <button id="bback" title="Back 0.5 s (←)">◀</button>
-      <button id="bplay" class="play" title="Play / pause (Space)">▶ Play</button>
-      <button id="bfwd" title="Forward 0.5 s (→)">▶</button>
-      <button id="bend" title="End (End)">⏭</button>
-      <div class="seg" id="speed"></div>
-    </div>
     <canvas id="timeline" title="Click or drag to seek"></canvas>
   </div>
 </div>
@@ -107,6 +121,11 @@ const D = /*__DATA__*/;
 const N = D.steps, H = D.horizon;
 const TEAM = ["#4D9DE0", "#4CB766", "#E2CF4A", "#E8853A", "#A974D9"], ENEMY = "#E5534B";  // CS2: blue, green, yellow, orange, purple
 const SIDE = {T: "#E3B341", CT: "#5DADE2"};
+// Both sides: all 10 slots carry predictions (slots 5-9 are the other side), and every player gets a CS2 colour.
+const BOTH = !!D.both, PRED = BOTH ? 10 : 5;
+const OTHER = D.meta.side === "T" ? "CT" : "T";
+const colorOf = p => p < 5 ? TEAM[p] : BOTH ? TEAM[p - 5] : ENEMY;
+const sideOf = p => p < 5 ? D.meta.side : OTHER;
 const KINDS = ["smoke", "inferno", "flash", "he", "decoy"];
 const VIEW = /*__VIEW__*/{};  // the app's display settings, and a key naming this round view
 // Speed, and where this round view was (playhead, playing, focus), are saved in the browser: changing a
@@ -115,7 +134,7 @@ const SAVED = "mirage-replay-state";
 const saved = (() => { try { return JSON.parse(localStorage.getItem(SAVED)) || {}; } catch { return {}; } })();
 const resume = VIEW.key !== undefined && saved.key === VIEW.key ? saved : null;
 function saveState() { try { localStorage.setItem(SAVED, JSON.stringify({key: VIEW.key, speed, playhead, playing, focus})); } catch {} }
-const opt = Object.assign({paths: "all", truth: true, team: false, nades: true, view: true, names: true, callouts: true, trail: 3}, VIEW.options);
+const opt = Object.assign({paths: "top", truth: true, team: false, nades: true, view: true, names: true, callouts: true, trail: 3}, VIEW.options);
 let playhead = resume ? Math.min(resume.playhead, N - 1) : 0, playing = false, speed = saved.speed || 1;
 let focus = resume ? resume.focus : null, last = null;
 
@@ -183,7 +202,7 @@ function pos(p) {  // interpolated screen position of slot p, or null if dead
   const a = D.xy[i][p], b = D.alive[j][p] ? D.xy[j][p] : a;
   return [lerp(a[0], b[0], f), lerp(a[1], b[1], f)];
 }
-function enemyShown(i, p) { return !opt.team || D.visible[i][p]; }
+function enemyShown(i, p) { return BOTH || !opt.team || D.visible[i][p]; }
 // Every death in the round: who, the step they were first seen dead, and where they fell.
 const DEATHS = [];
 for (let p = 0; p < 10; p++)
@@ -200,17 +219,20 @@ function arrow(x0, y0, x1, y1, size, color) {
   ctx.lineTo(x1 - Math.cos(a + 0.5) * size, y1 - Math.sin(a + 0.5) * size);
   ctx.closePath(); ctx.fill();
 }
-function smoothLine(pts) {  // screen points -> smooth path through midpoints
+const SMOOTHING = 0.35;  // how much path corners are rounded: 0 = straight lines between points, 1 = curve through the midpoints
+function smoothLine(pts) {  // screen points -> path that is straight between points and rounded at each corner
   ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+  const s = SMOOTHING / 2;
   for (let k = 1; k < pts.length - 1; k++) {
-    const mx = (pts[k][0] + pts[k + 1][0]) / 2, my = (pts[k][1] + pts[k + 1][1]) / 2;
-    ctx.quadraticCurveTo(pts[k][0], pts[k][1], mx, my);
+    const [px, py] = pts[k - 1], [cx, cy] = pts[k], [nx, ny] = pts[k + 1];
+    ctx.lineTo(cx - (cx - px) * s, cy - (cy - py) * s);
+    ctx.quadraticCurveTo(cx, cy, cx + (nx - cx) * s, cy + (ny - cy) * s);
   }
   const l = pts[pts.length - 1]; ctx.lineTo(l[0], l[1]);
 }
 function draw() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.fillStyle = "#0E1117"; ctx.fillRect(0, 0, W, Hh);
+  ctx.fillStyle = "#0F1114"; ctx.fillRect(0, 0, W, Hh);
   if (img.complete) ctx.drawImage(img, sx(X0), sy(Y1), (X1 - X0) * scale(), (Y1 - Y0) * scale());
   const [i, j, f] = stepPair();
   const u = scale();
@@ -221,13 +243,16 @@ function draw() {
     for (const c of D.callouts) ctx.fillText(c.label.toUpperCase(), sx(c.x), sy(c.y));
   }
 
-  // grenades (step i, fading in/out across the step)
+  // grenades (step i, fading in/out across the step). One in flight slides to where the same throw is at
+  // step j; if it isn't there (it popped) it holds still. Extrapolating its velocity sent it through walls
+  // and off the map after bounces.
   if (opt.nades) {
+    const next = new Map(D.utility[j].map(g => [g[8], g]));
     for (const g of D.utility[i]) {
-      const [x, y, kind, own, flying, vx, vy, age] = g, k = KINDS[kind];
+      const [x, y, kind, own, flying, vx, vy, age, id] = g, k = KINDS[kind];
       const X = sx(x), Y = sy(y), rim = own ? "rgba(93,173,226,0.95)" : "rgba(239,83,80,0.95)";
       if (flying) {
-        const nx = x + vx * 0.5 * f, ny = y + vy * 0.5 * f;
+        const to = id !== undefined && next.get(id), nx = to ? lerp(x, to[0], f) : x, ny = to ? lerp(y, to[1], f) : y;
         ctx.fillStyle = "#E6EDF3"; ctx.beginPath(); ctx.arc(sx(nx), sy(ny), 3.5, 0, 7); ctx.fill();
       } else if (k === "smoke" || k === "inferno") {
         const r = (k === "smoke" ? 144 : 120) * u;
@@ -257,12 +282,12 @@ function draw() {
       for (let k = Math.max(0, i - trail); k <= i; k++) if (D.alive[k][p]) pts.push([sx(D.xy[k][p][0]), sy(D.xy[k][p][1])]);
       const now = pos(p); pts.push([sx(now[0]), sy(now[1])]);
       if (pts.length < 2) continue;
-      ctx.strokeStyle = p < 5 ? TEAM[p] : ENEMY; ctx.globalAlpha = 0.35; ctx.lineWidth = 2; smoothLine(pts); ctx.stroke(); ctx.globalAlpha = 1;
+      ctx.strokeStyle = colorOf(p); ctx.globalAlpha = 0.35; ctx.lineWidth = 2; smoothLine(pts); ctx.stroke(); ctx.globalAlpha = 1;
     }
   }
 
   // predictions: blend step i's and step j's paths so they glide too
-  for (let p = 0; p < 5; p++) {
+  for (let p = 0; p < PRED; p++) {
     if (!D.alive[i][p] || (focus !== null && focus !== p) || opt.paths === "none") continue;
     const pa = D.paths[i][p], pb = D.alive[j][p] ? D.paths[j][p] : pa;
     const pr = D.probs[i][p], prb = D.alive[j][p] ? D.probs[j][p] : pr;
@@ -276,10 +301,10 @@ function draw() {
       const pts = [[sx(now[0]), sy(now[1])]];
       for (let h = 0; h < H; h++) pts.push([sx(lerp(pa[m][h][0], pb[m][h][0], f)), sy(lerp(pa[m][h][1], pb[m][h][1], f))]);
       ctx.globalAlpha = 0.25 + 0.75 * probs[m] / top;
-      ctx.strokeStyle = TEAM[p]; ctx.lineWidth = 1.5 + 4 * probs[m]; ctx.lineCap = "round";
+      ctx.strokeStyle = colorOf(p); ctx.lineWidth = 1.5 + 4 * probs[m]; ctx.lineCap = "round";
       smoothLine(pts); ctx.stroke();
       const a = pts[pts.length - 2], b = pts[pts.length - 1];
-      arrow(a[0], a[1], b[0], b[1], 9 + 8 * probs[m], TEAM[p]);
+      arrow(a[0], a[1], b[0], b[1], 9 + 8 * probs[m], colorOf(p));
       ctx.globalAlpha = 1;
     }
     if (opt.truth && D.truth[i][p].length) {
@@ -292,7 +317,7 @@ function draw() {
   // deaths, both teams (the kill feed shows enemy deaths to everyone): a ringed cross and the name
   for (const d of DEATHS) {
     if (d.step > i) break;
-    const X = sx(d.x), Y = sy(d.y), color = d.p < 5 ? TEAM[d.p] : ENEMY;
+    const X = sx(d.x), Y = sy(d.y), color = colorOf(d.p);
     const fresh = clamp(1 - (playhead - d.step) / 6, 0, 1);  // pulse for the first few seconds
     if (fresh > 0) { ctx.beginPath(); ctx.arc(X, Y, 9 + 10 * (1 - fresh), 0, 7); ctx.strokeStyle = color; ctx.globalAlpha = 0.6 * fresh; ctx.lineWidth = 2; ctx.stroke(); }
     ctx.globalAlpha = 0.9;
@@ -307,8 +332,8 @@ function draw() {
     ctx.globalAlpha = 1;
   }
 
-  // where the team last saw hidden enemies
-  for (let p = 5; p < 10; p++) {
+  // where the team last saw hidden enemies (not with both sides shown: everyone is drawn where they are)
+  for (let p = 5; p < (BOTH ? 5 : 10); p++) {
     const ls = D.lastSeen[i][p];
     if (!D.alive[i][p] || D.visible[i][p] || !ls) continue;
     ctx.strokeStyle = ENEMY; ctx.setLineDash([3, 3]); ctx.lineWidth = 1.5;
@@ -320,9 +345,9 @@ function draw() {
   // players
   for (let p = 9; p >= 0; p--) {
     const now = pos(p); if (!now) continue;
-    const own = p < 5, seen = own || D.visible[i][p];
+    const own = p < PRED, seen = own || D.visible[i][p];
     if (!own && !enemyShown(i, p)) continue;
-    const X = sx(now[0]), Y = sy(now[1]), color = own ? TEAM[p] : ENEMY;
+    const X = sx(now[0]), Y = sy(now[1]), color = colorOf(p);
     ctx.globalAlpha = seen ? 1 : 0.4;
     if (opt.view) {
       const yaw = lerpAngle(D.yaw[i][p], D.alive[j][p] ? D.yaw[j][p] : D.yaw[i][p], f) * Math.PI / 180;
@@ -331,6 +356,9 @@ function draw() {
     }
     ctx.beginPath(); ctx.arc(X, Y, own ? 7.5 : 6.5, 0, 7); ctx.fillStyle = color; ctx.fill();
     ctx.lineWidth = 2; ctx.strokeStyle = own && (focus === null || focus === p) ? "#fff" : "#0B0E13"; ctx.stroke();
+    if (BOTH) {  // which side: a ring in the side's colour (both teams share the five CS2 player colours)
+      ctx.beginPath(); ctx.arc(X, Y, 10.5, 0, 7); ctx.strokeStyle = SIDE[sideOf(p)]; ctx.lineWidth = 1.8; ctx.stroke();
+    }
     if (D.hasBomb[i][p]) { ctx.fillStyle = "#F85149"; ctx.fillRect(X + 5, Y - 10, 6, 6); }
     if (opt.names) {
       ctx.font = "600 11px Barlow, Segoe UI, sans-serif"; ctx.textAlign = "center";
@@ -359,19 +387,20 @@ function hover(e) {
   if (drag || e.target !== cv) { tip.style.display = "none"; return; }
   const [p, mx, my] = nearestPlayer(e), [i] = stepPair();
   if (p === null) { tip.style.display = "none"; return; }
-  const own = p < 5, status = own ? "" : D.visible[i][p] ? " · spotted" : " · hidden from team";
-  tip.innerHTML = `<b>${esc(D.names[p])}</b><span style="color:var(--muted)">${status}</span><br>${D.hp[i][p]} hp · ${esc(D.weapons[D.weapon[i][p]])}<br>${esc(D.places[D.place[i][p]] || "")}`
+  const own = p < PRED, status = own ? "" : D.visible[i][p] ? "spotted" : "hidden from team";
+  tip.innerHTML = `<b>${esc(D.names[p])}</b>${status ? `<br><span style="color:var(--muted)">${status}</span>` : ""}`
+    + `<br>${D.hp[i][p]} hp, ${esc(D.weapons[D.weapon[i][p]])}<br>${esc(D.places[D.place[i][p]] || "")}`
     + (own ? `<br><span style="color:var(--muted)">click to focus</span>` : "");
   tip.style.display = "block";
   tip.style.left = Math.min(mx + 14, W - tip.offsetWidth - 6) + "px"; tip.style.top = (my + 14) + "px";
 }
-function clickMap(e) { const [p] = nearestPlayer(e); if (p !== null && p < 5) setFocus(focus === p ? null : p); else if (p === null) setFocus(null); }
+function clickMap(e) { const [p] = nearestPlayer(e); if (p !== null && p < PRED) setFocus(focus === p ? null : p); else if (p === null) setFocus(null); }
 function setFocus(p) { focus = p; last = null; }
 
 // ---------------------------------------------------------------- side panel
 function teamCard(own, i) {
   const slots = own ? [0, 1, 2, 3, 4] : [5, 6, 7, 8, 9];
-  const side = own ? D.meta.side : (D.meta.side === "T" ? "CT" : "T");
+  const side = own ? D.meta.side : OTHER;
   const color = SIDE[side];
   let rows = "";
   for (const p of slots) {
@@ -383,10 +412,10 @@ function teamCard(own, i) {
       .map(([k, name, title]) => icon(name, title, "nade").repeat(n[k])).join("");
     const wname = D.weapons[D.weapon[i][p]], weapon = WEAPON_ICONS[wname] ? icon(WEAPON_ICONS[wname], wname, "wpn") : esc(wname);
     const extras = (D.kit[i][p] ? icon("kit", "Defuse kit", "gear") : "") + (D.hasBomb[i][p] ? icon("bomb", "C4", "gear bomb") : "")
-      + (!own && alive ? (D.visible[i][p] ? " · visible" : " · hidden") : "");
+      + (!own && !BOTH && alive ? `<span class="seen">${D.visible[i][p] ? "visible" : "hidden"}</span>` : "");
     const armor = D.armor[i][p] > 0 ? (D.helmet[i][p] ? icon("helmet", "Kevlar + helmet", "armor") : icon("armor", "Kevlar", "armor")) : "";
-    rows += `<div class="prow ${alive ? "" : "dead"} ${own && focus === p ? "focus" : ""}" data-p="${p}">
-      <div class="dot" style="background:${own ? TEAM[p] : ENEMY}"></div>
+    rows += `<div class="prow ${alive ? "" : "dead"} ${p < PRED && focus === p ? "focus" : ""}" data-p="${p}">
+      <div class="dot" style="background:${colorOf(p)}"></div>
       <div><div class="name">${esc(D.names[p])}</div><div class="sub loadout">${weapon}${nades}${extras}</div>
            <div class="sub">${alive ? esc(D.places[D.place[i][p]] || "") : "dead"}</div></div>
       <div class="right"><b>${hp}</b> <span class="sub">hp</span> ${armor}<div class="hp"><div style="width:${hp}%;background:${hc}"></div></div>
@@ -404,23 +433,23 @@ function focusCard(i) {
   let bars = "";
   for (const [rank, m] of order.entries()) {
     const end = D.endPlace ? D.places[D.endPlace[i][p][m]] : "";
-    bars += `<div class="bar"><div class="fill"><div style="width:${100 * probs[m] / top}%;background:${TEAM[p]};opacity:${0.4 + 0.6 * probs[m] / top}"></div>
-      <span>Path ${rank + 1}${end ? " · " + esc(end) : ""}</span></div><div class="right">${Math.round(100 * probs[m])}%</div></div>`;
+    bars += `<div class="bar"><div class="fill"><div style="width:${100 * probs[m] / top}%;background:${colorOf(p)};opacity:${0.4 + 0.6 * probs[m] / top}"></div>
+      <span>Path ${rank + 1}${end ? ": " + esc(end) : ""}</span></div><div class="right">${Math.round(100 * probs[m])}%</div></div>`;
   }
   const errs = [3, 5, 10].map(s => {
     const v = D.err[s].min[i][p], t = D.err[s].top[i][p];
     return `<div><div class="sub">Error ${s}s</div><b>${v < 0 ? "—" : v + "u"}</b><div class="sub">${t < 0 ? "" : "top path " + t + "u"}</div></div>`;
   }).join("");
-  return `<div class="card"><div class="head"><span><span class="dot" style="display:inline-block;height:12px;vertical-align:-1px;background:${TEAM[p]};margin-right:6px"></span>${esc(D.names[p])}</span>
+  return `<div class="card"><div class="head"><span><span class="dot" style="display:inline-block;height:12px;vertical-align:-1px;background:${colorOf(p)};margin-right:6px"></span>${esc(D.names[p])}</span>
     <span class="sub" style="cursor:pointer" id="unfocus">✕</span></div>${bars}<div class="errs">${errs}</div>
-    <div class="sub" style="margin-top:6px">Best of 6 paths, top path below · 1u ≈ 1.9 cm</div></div>`;
+    <div class="sub" style="margin-top:6px">Best of 6 paths, top path below</div><div class="sub">1u ≈ 1.9 cm</div></div>`;
 }
 function renderSide(i) {
   const key = `${i}|${focus}`;
   if (key === last) return; last = key;
   $("side").innerHTML = teamCard(true, i) + focusCard(i) + teamCard(false, i);
   for (const r of document.querySelectorAll(".prow")) {
-    const p = +r.dataset.p; if (p < 5) r.onclick = () => setFocus(focus === p ? null : p);
+    const p = +r.dataset.p; if (p < PRED) r.onclick = () => setFocus(focus === p ? null : p);
   }
   const u = $("unfocus"); if (u) u.onclick = () => setFocus(null);
   const sc = D.score[i], al = D.aliveCount[i];
@@ -435,8 +464,8 @@ function renderFeed() {
   const key = recent.map(d => d.p).join(",");
   if (key === feedKey) return; feedKey = key;
   $("feed").innerHTML = recent.map(d => {
-    const own = d.p < 5, color = own ? TEAM[d.p] : ENEMY, who = own ? D.meta.team : D.meta.enemy;
-    return `<div>${icon("skull", "Killed", "skull")}<span style="color:${color}">${esc(D.names[d.p])}</span> <span style="color:var(--muted)">${esc(who)} · ${fmtClock(D.clock[Math.min(d.step, N - 1)])}</span></div>`;
+    const own = d.p < 5, color = colorOf(d.p), who = own ? D.meta.team : D.meta.enemy;
+    return `<div>${icon("skull", "Killed", "skull")}<span style="color:${color}">${esc(D.names[d.p])}</span> <span style="color:var(--muted)">${esc(who)}</span> <span class="when">${fmtClock(D.clock[Math.min(d.step, N - 1)])}</span></div>`;
   }).join("");
 }
 
@@ -447,7 +476,7 @@ function drawTimeline() {
   tctx.setTransform(dpr, 0, 0, dpr, 0, 0); tctx.clearRect(0, 0, w, h);
   const pad = 8, x = k => pad + (w - 2 * pad) * k / Math.max(N - 1, 1);
   const series = [D.teamErr.top, D.teamErr.min], max = Math.max(1, ...series.flat().filter(v => v >= 0));
-  const y = v => h - 6 - (h - 18) * v / max;
+  const y = v => h - 16 - (h - 46) * v / max;  // the death rows sit above the lines, the label below
   for (const [si, s] of series.entries()) {
     tctx.beginPath(); let started = false;
     for (let k = 0; k < N; k++) { if (s[k] < 0) { started = false; continue; } if (!started) { tctx.moveTo(x(k), y(s[k])); started = true; } else tctx.lineTo(x(k), y(s[k])); }
@@ -455,14 +484,14 @@ function drawTimeline() {
   }
   tctx.font = "bold 10px Barlow, Segoe UI, sans-serif"; tctx.textAlign = "center";
   for (const d of DEATHS) {  // enemy deaths along the top, teammate deaths below them
-    tctx.fillStyle = d.p < 5 ? TEAM[d.p] : ENEMY;
+    tctx.fillStyle = colorOf(d.p);
     tctx.fillText("✕", x(d.step), d.p < 5 ? 22 : 11);
   }
   if (D.plantStep >= 0) { tctx.fillStyle = "#F85149"; tctx.fillRect(x(D.plantStep) - 1, 0, 2, h); }
   tctx.fillStyle = "#DADDE114"; tctx.fillRect(pad, 0, x(playhead) - pad, h);
   tctx.fillStyle = "#fff"; tctx.fillRect(x(playhead) - 1, 0, 2, h);
   tctx.fillStyle = "#8B94A3"; tctx.font = "10px Barlow, Segoe UI, sans-serif"; tctx.textAlign = "right";
-  tctx.fillText("10 s error · best of 6 / top path", w - pad, h - 4);
+  tctx.fillText("10 s error: best of 6 (light), top path (dark)", w - pad, h - 4);
 }
 function seekFromEvent(e) { const r = tl.getBoundingClientRect(); const k = (e.clientX - r.left - 8) / (r.width - 16); playhead = clamp(k * (N - 1), 0, N - 1); }
 let seeking = false;
@@ -471,7 +500,15 @@ window.addEventListener("mousemove", e => { if (seeking) seekFromEvent(e); });
 window.addEventListener("mouseup", () => { seeking = false; });
 
 // ---------------------------------------------------------------- controls
-function setPlaying(v) { playing = v; if (v && playhead >= N - 1) playhead = 0; $("bplay").textContent = v ? "⏸ Pause" : "▶ Play"; }
+const PLAY_ICON = '<svg viewBox="0 0 16 16"><path d="M4 2.5v11L13 8z"/></svg>', PAUSE_ICON = '<svg viewBox="0 0 16 16"><path d="M4 3h3v10H4zM9 3h3v10H9z"/></svg>';
+function setPlaying(v) { playing = v; if (v && playhead >= N - 1) playhead = 0; $("bplay").innerHTML = v ? `${PAUSE_ICON}Pause` : `${PLAY_ICON}Play`; }
+setPlaying(false);
+{  // header: teams, side, round, result and the round's error, beside the clock
+  const won = D.meta.won === null ? "" : D.meta.won ? '<span style="color:var(--good)">Won</span>' : '<span style="color:var(--bad)">Lost</span>';
+  $("title").innerHTML = `<div class="t1">${esc(D.meta.team)} <span class="tag" style="color:${SIDE[D.meta.side]}">${D.meta.side}</span>
+    <span class="vs">vs</span> ${esc(D.meta.enemy)}${BOTH ? ` <span class="tag" style="color:${SIDE[OTHER]}">${OTHER}</span>` : ""}</div>
+    <div class="t2"><span>Round ${D.meta.round}</span>${won}${VIEW.err10 == null ? "" : `<span>10 s error ${VIEW.err10}u</span>`}</div>`;
+}
 $("bplay").onclick = () => setPlaying(!playing);
 $("bstart").onclick = () => { playhead = 0; };
 $("bend").onclick = () => { playhead = N - 1; setPlaying(false); };
@@ -494,7 +531,7 @@ function seg(container, items, get, set) {
   return box;
 }
 seg("speed", [["0.5x", 0.5], ["1x", 1], ["2x", 2], ["4x", 4]], () => speed, v => { speed = v; });
-$("legend").innerHTML = "Arrows: predicted 10 s paths · dashed: actual · ring: last seen";
+$("legend").innerHTML = "Arrows: predicted 10 s paths<br>Dashed: actual path<br>Ring: last seen";
 
 // ---------------------------------------------------------------- loop
 let prev = performance.now(), savedAt = 0;

@@ -27,6 +27,8 @@ from nbclient.exceptions import CellExecutionError
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("notebook")
+    # delta/train.slurm adds --resume to every command; a notebook always runs from the top.
+    parser.add_argument("--resume", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
 
     if sys.platform == "win32":

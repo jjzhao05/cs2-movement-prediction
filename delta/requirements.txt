@@ -1,4 +1,10 @@
-# What transformer.py and gru.py need on the cluster (torch is installed separately by setup.sh).
+# What transformer.py, gru.py and baselines.ipynb (through run_notebook.py) need on the cluster
+# (torch is installed separately by setup.sh).
 numpy>=2.0
 scipy
 scikit-learn
+pandas
+matplotlib
+nbclient
+nbformat
+ipykernel

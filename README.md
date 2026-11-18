@@ -145,6 +145,7 @@ than `scp`): run Globus Connect Personal on this machine, then in the Globus web
 # on Delta
 bash delta/submit.sh smoke          # 1 epoch on 20 rounds: checks venv, GPU and data
 bash delta/submit.sh all            # transformer, its 3 ablations and the GRU, one GPU job each
+bash delta/submit.sh baselines      # GRU, then baselines.ipynb once it has finished (kNN etc. predictions for app.py)
 squeue -u $USER                     # queue; output in logs/slurm-<name>-<jobid>.out
 ```
 
